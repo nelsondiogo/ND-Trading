@@ -31,12 +31,12 @@ class BybitExchangeManager:
         self.testnet = testnet
         self._init_exchange()
 
-    async def set_leverage(self, symbol: str, leverage: int = 25):
-        """Ajusta automaticamente a alavancagem até 25x para pequenos saldos."""
+    async def set_leverage(self, symbol: str, leverage: int):
+        """Define a alavancagem configurada manualmente pelo utilizador."""
         try:
             await self.exchange.set_leverage(leverage, symbol)
         except Exception as e:
-            pass  # Ignora se já estiver configurada na corretora
+            pass  # Ignora caso já esteja definida na corretora
 
     async def fetch_market_data(self, symbol: str, timeframe: str = '1m', limit: int = 50):
         if not self.exchange:
@@ -52,7 +52,7 @@ class BybitExchangeManager:
         except Exception as e:
             return symbol, None, None, 0.0
 
-    async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int = 25):
+    async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int):
         if not self.exchange:
             return None
         try:
