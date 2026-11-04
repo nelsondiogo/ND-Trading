@@ -1,4 +1,5 @@
 import ccxt.async_support as ccxt
+import asyncio
 import logging
 import time
 
@@ -20,8 +21,8 @@ class BybitExchangeManager:
         """Recupera dados OHLCV e ticker atual com medição de latência."""
         start_time = time.time()
         try:
-            # Executa chamadas em paralelo para otimizar latência de rede
-            ohlcv, ticker = await ccxt.async_support.asyncio.gather(
+            # Correção: Usa asyncio.gather diretamente sem referenciar o módulo errado
+            ohlcv, ticker = await asyncio.gather(
                 self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit),
                 self.exchange.fetch_ticker(symbol)
             )
@@ -44,4 +45,3 @@ class BybitExchangeManager:
 
     async def close(self):
         await self.exchange.close()
-
