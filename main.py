@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import time
 import uvicorn
 from fastapi import FastAPI, Form, Request
@@ -404,4 +405,5 @@ async def startup_event():
     asyncio.create_task(trading_loop())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=10000)
+    port = int(os.environ.get("PORT", 10000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
