@@ -13,11 +13,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 app = FastAPI()
 
+exchange_mgr = None
+trading_engine = None
+
 try:
     exchange_mgr = BybitExchangeManager(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, config.IS_TESTNET)
     trading_engine = TradingEngine(config)
 except Exception as e:
-    logging.error(f"Erro ao inicializar módulos: {e}")
+    logging.error(f"Erro ao inicializar gestor da exchange: {e}")
 
 bot_running = False
 active_position = None
