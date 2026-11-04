@@ -79,6 +79,26 @@ async def dashboard_page(request: Request):
         </div>
         """
 
+    trades_html = ""
+    wins = 0
+    if not closed_trades:
+        trades_html = "<p style='color:#94a3b8; text-align:center;'>Nenhuma operação fechada ainda.</p>"
+    else:
+        for t in closed_trades:
+            if t['pnl_usdt'] >= 0:
+                wins += 1
+            color = "#4ade80" if t['pnl_usdt'] >= 0 else "#f87171"
+            trades_html += f"""
+            <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
+                <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+                    <b>{t['symbol']} ({t['side']})</b>
+                    <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f} USDT</span>
+                </div>
+                <small style="color:#94a3b8;">Fechado com sucesso por rotação/trava</small>
+            </div>
+            """
+    win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="pt">
@@ -96,7 +116,7 @@ async def dashboard_page(request: Request):
             .tab-content.active {{ display: block; }}
             .card {{ background: #161f31; border: 1px solid #2a374a; padding: 15px; border-radius: 10px; margin-bottom: 12px; }}
             .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
-            .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; }}
+            .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; }}
             .nav-item.active {{ color: #4ade80; font-weight: bold; }}
             input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
             button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }}
@@ -123,10 +143,30 @@ async def dashboard_page(request: Request):
                     <button type="submit" style="background:{('#ef4444' if bot_running else '#22c55e')};">{('PARAR ROBÔ' if bot_running else 'INICIAR ROBÔ')}</button>
                 </form>
             </div>
+            
             <div id="tab-mercado" class="tab-content">
                 <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (10 PARES HFT)</div>
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p>"}
             </div>
+
+            <div id="tab-grafico" class="tab-content">
+                <div class="card" style="padding: 10px;">
+                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract</div>
+                    <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=BYBIT%3ADOGEUSDT&interval=1&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=1e293b&theme=dark&style=1&timezone=Etc%2FUTC" style="width:100%; height:300px; border:none; border-radius:8px;"></iframe>
+                </div>
+            </div>
+
+            <div id="tab-historico" class="tab-content">
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
+                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b style="color:#4ade80; font-size:15px;">+{total_realized_pnl:.6f}</b></div>
+                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">WIN RATE</span><br><b style="color:#4ade80; font-size:15px;">{win_rate}%</b></div>
+                </div>
+                <div class="card">
+                    <span style="font-size:12px; color:#94a3b8; font-weight:bold; display:block; margin-bottom:8px;">REGISTO DE TRADES ({len(closed_trades)})</span>
+                    {trades_html}
+                </div>
+            </div>
+
             <div id="tab-ajustes" class="tab-content">
                 <div class="card">
                     <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração & Alavancagem</h2>
@@ -146,9 +186,12 @@ async def dashboard_page(request: Request):
                 </div>
             </div>
         </div>
+
         <div class="bottom-nav">
             <button class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">Dashboard</button>
             <button class="nav-item" id="nav-mercado" onclick="switchTab('mercado')">Mercado</button>
+            <button class="nav-item" id="nav-grafico" onclick="switchTab('grafico')">Gráfico</button>
+            <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">Histórico</button>
             <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">Ajustes</button>
         </div>
         <script>
