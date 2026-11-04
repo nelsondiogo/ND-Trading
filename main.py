@@ -25,33 +25,35 @@ scanned_pairs_data = {}
 last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-LEVERAGE = 10  # Alavancagem padrão para permitir operar com pequenos saldos
+LEVERAGE = 10
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
     
+    # 1. Leitura Segura do Saldo
     if exchange_mgr.exchange:
         try:
             balance_data = await exchange_mgr.exchange.fetch_balance()
-            if 'USDT' in balance_data:
+            if balance_data and 'USDT' in balance_data:
                 usdt_info = balance_data.get('USDT', {})
                 live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
                 
+                # Quando PARADO: Saldo inicial e atual acompanham a corretora
                 if not bot_running:
-                    # Quando parado, o inicial e o atual refletem o saldo real da corretora
                     initial_account_balance = live_bal
                     current_account_balance = live_bal
                 else:
-                    # Quando a operar, o atual é o inicial + PnL realizado e não realizado
+                    # Quando a OPERAR: Saldo atual reflete o inicial + PnL das operações
                     current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
-            logging.error(f"Erro ao ler saldo: {e}")
+            logging.error(f"Erro ao ler saldo na rota principal: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
 
+    # HTML Posição Ativa
     active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
     if active_position:
         side_color = "#f87171" if active_position['side'] == 'SHORT' else "#4ade80"
@@ -68,6 +70,7 @@ async def dashboard_page(request: Request):
         </div>
         """
 
+    # HTML Histórico
     trades_html = ""
     wins = 0
     if not closed_trades:
@@ -88,6 +91,7 @@ async def dashboard_page(request: Request):
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
 
+    # HTML Mercado
     mercado_html = ""
     for sym, data in scanned_pairs_data.items():
         tag_color = "#f87171" if data['signal'] == 'SHORT' else "#4ade80"
@@ -186,32 +190,11 @@ async def dashboard_page(request: Request):
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
-            <!-- ABA 3: GRAFICO COM TRADINGVIEW REAL EM TEMPO REAL -->
+            <!-- ABA 3: GRAFICO COM TRADINGVIEW EM TEMPO REAL -->
             <div id="tab-grafico" class="tab-content">
                 <div class="card" style="padding: 10px;">
-                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract (TradingView)</div>
-                    <div class="tradingview-widget-container" style="height:320px; width:100%;">
-                        <div id="tradingview_widget" style="height:100%;width:100%"></div>
-                        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-                        <script type="text/javascript">
-                        new TradingView.widget(
-                        {
-                          "width": "100%",
-                          "height": "320",
-                          "symbol": "BYBIT:DOGEUSDT",
-                          "interval": "15",
-                          "timezone": "Etc/UTC",
-                          "theme": "dark",
-                          "style": "1",
-                          "locale": "pt",
-                          "toolbar_bg": "#1e293b",
-                          "enable_publishing": false,
-                          "hide_top_toolbar": false,
-                          "save_image": false,
-                          "container_id": "tradingview_widget"
-                        });
-                        </script>
-                    </div>
+                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract</div>
+                    <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=BYBIT%3ADOGEUSDT&interval=15&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=1e293b&theme=dark&style=1&timezone=Etc%2FUTC" style="width:100%; height:320px; border:none; border-radius:8px;"></iframe>
                 </div>
             </div>
 
@@ -357,7 +340,6 @@ async def trading_loop():
 
             if best_sig and best_sym and bot_running:
                 last_signal_text = f"{best_sig} {best_sym}"
-                # Quantidade adaptada com alavancagem 10x
                 amount = 20.0 if 'DOGE' in best_sym else 0.01
                 order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
                 if order:
