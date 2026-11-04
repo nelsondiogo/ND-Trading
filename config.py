@@ -1,45 +1,34 @@
 import os
-import json
 
-CONFIG_FILE = "config.json"
-
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return {
-        "BYBIT_API_KEY": "",
-        "BYBIT_API_SECRET": "",
-        "IS_TESTNET": False
-    }
-
-def save_config(api_key, api_secret, is_testnet):
-    config_data = {
-        "BYBIT_API_KEY": api_key,
-        "BYBIT_API_SECRET": api_secret,
-        "IS_TESTNET": is_testnet
-    }
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(config_data, f, indent=4)
-
-_current_config = load_config()
-
-BYBIT_API_KEY = _current_config["BYBIT_API_KEY"]
-BYBIT_API_SECRET = _current_config["BYBIT_API_SECRET"]
-IS_TESTNET = _current_config["IS_TESTNET"]
-
-# Pares atualizados com ativos de menor valor nominal (DOGE, XRP, ADA, BTC) para ordens menores
+# Lista dinâmica de 10 pares de alta liquidez para scalping
 PAIRS = [
-    "DOGE/USDT:USDT",
-    "XRP/USDT:USDT",
-    "ADA/USDT:USDT",
-    "BTC/USDT:USDT"
+    'DOGE/USDT:USDT',
+    'XRP/USDT:USDT',
+    'ADA/USDT:USDT',
+    'SOL/USDT:USDT',
+    'LINK/USDT:USDT',
+    'AVAX/USDT:USDT',
+    'NEAR/USDT:USDT',
+    'PEPE/USDT:USDT',
+    'SHIB/USDT:USDT',
+    'RENDER/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 15
-ADX_THRESHOLD = 20.0
-TRAILING_ACTIVATION_THRESHOLD = 0.008
-TRAILING_DRAWDOWN_PERCENT = 0.25
+SCAN_INTERVAL = 2  # Alta frequência (varredura a cada 2 segundos)
+
+# Alavancagem manual configurável (pode ser ajustada pelo utilizador)
+USER_LEVERAGE = 10 
+
+def load_config():
+    return {
+        "BYBIT_API_KEY": os.getenv("BYBIT_API_KEY", "cIHTUlByBnrfkEy8S"),
+        "BYBIT_API_SECRET": os.getenv("BYBIT_API_SECRET", ""),
+        "IS_TESTNET": True,
+        "LEVERAGE": int(os.getenv("USER_LEVERAGE", USER_LEVERAGE))
+    }
+
+def save_config(api_key, api_secret, is_testnet, leverage=10):
+    os.environ["BYBIT_API_KEY"] = api_key
+    os.environ["BYBIT_API_SECRET"] = api_secret
+    global USER_LEVERAGE
+    USER_LEVERAGE = int(leverage)
