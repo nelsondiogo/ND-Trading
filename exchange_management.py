@@ -21,16 +21,23 @@ class BybitExchangeManager:
         })
         if self.testnet:
             self.exchange.set_sandbox_mode(True)
-        logging.info("BybitExchangeManager inicializado com chaves dinâmicas.")
+        logging.info("BybitExchangeManager inicializado.")
 
     async def update_credentials(self, api_key, api_secret, testnet):
-        """Permite atualizar as chaves em tempo real sem reiniciar o bot."""
         if self.exchange:
             await self.exchange.close()
         self.api_key = api_key
         self.api_secret = api_secret
         self.testnet = testnet
         self._init_exchange()
+
+    async def set_leverage(self, symbol: str, leverage: int = 10):
+        """Define a alavancagem para o par de futuros na Bybit."""
+        try:
+            await self.exchange.set_leverage(leverage, symbol)
+        except Exception as e:
+            # Ignora caso a alavancagem já esteja definida na corretora
+            pass
 
     async def fetch_market_data(self, symbol: str, timeframe: str = '5m', limit: int = 50):
         if not self.exchange:
@@ -47,10 +54,11 @@ class BybitExchangeManager:
             logging.error(f"Erro ao obter dados para {symbol}: {e}")
             return symbol, None, None, 0.0
 
-    async def execute_market_order(self, symbol: str, side: str, amount: float):
+    async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int = 10):
         if not self.exchange:
             return None
         try:
+            await self.set_leverage(symbol, leverage)
             order_side = 'buy' if side.upper() == 'LONG' else 'sell'
             return await self.exchange.create_order(symbol, 'market', order_side, amount)
         except Exception as e:
