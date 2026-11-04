@@ -16,49 +16,83 @@ trading_engine = TradingEngine(config)
 
 active_position = None
 max_profit_reached = 0.0
+last_scan_status = "A aguardar início..."
 
 # ==========================================
-# ABA DE CONFIGURAÇÃO (PAINEL WEB)
+# PAINEL DE CONTROLO E DASHBOARD (UI)
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
-async def config_page(request: Request):
+async def dashboard_page(request: Request):
     current_conf = config.load_config()
+    has_keys = bool(current_conf['BYBIT_API_KEY'] and current_conf['BYBIT_API_SECRET'])
+    
+    status_color = "#4ade80" if has_keys and exchange_mgr.exchange else "#f87171"
+    status_text = "Conectado à Bybit & A Operar" if has_keys and exchange_mgr.exchange else "Chaves em falta ou inválidas"
+
+    pos_html = "Nenhuma posição aberta no momento."
+    if active_position:
+        pos_html = f"""
+        <b>Ativo:</b> {active_position['symbol']}<br>
+        <b>Lado:</b> {active_position['side']}<br>
+        <b>Preço de Entrada:</b> {active_position['entry_price']}<br>
+        <b>Pico de Lucro:</b> {max_profit_reached*100:.2f}%
+        """
+
     html_content = f"""
     <!DOCTYPE html>
     <html lang="pt">
     <head>
         <meta charset="UTF-8">
-        <title>BotTrd - Painel de Configuração</title>
+        <meta http-equiv="refresh" content="15">
+        <title>BotTrd - Dashboard de Trading</title>
         <style>
-            body {{ font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }}
-            .container {{ max-width: 500px; margin: auto; background: #1e293b; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }}
-            h2 {{ color: #38bdf8; text-align: center; }}
-            label {{ display: block; margin-top: 15px; font-weight: bold; }}
-            input[type="text"], input[type="password"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0f172a; border: 1px solid #475569; color: white; border-radius: 5px; }}
-            .checkbox-group {{ margin-top: 20px; display: flex; align-items: center; gap: 10px; }}
-            button {{ width: 100%; margin-top: 25px; background: #0284c7; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 5px; cursor: pointer; }}
+            body {{ font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }}
+            .container {{ max-width: 600px; margin: auto; background: #1e293b; padding: 25px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }}
+            h2 {{ color: #38bdf8; text-align: center; margin-bottom: 5px; }}
+            .badge {{ text-align: center; font-size: 14px; color: {status_color}; margin-bottom: 20px; font-weight: bold; }}
+            .card {{ background: #0f172a; padding: 15px; border-radius: 8px; margin-bottom: 15px; border: 1px solid #334155; }}
+            .card h3 {{ margin-top: 0; color: #38bdf8; font-size: 16px; }}
+            label {{ display: block; margin-top: 10px; font-size: 14px; }}
+            input[type="text"], input[type="password"] {{ width: 100%; padding: 8px; margin-top: 5px; background: #1e293b; border: 1px solid #475569; color: white; border-radius: 5px; box-sizing: border-box; }}
+            .checkbox-group {{ margin-top: 15px; display: flex; align-items: center; gap: 10px; }}
+            button {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 10px; font-size: 15px; border-radius: 5px; cursor: pointer; }}
             button:hover {{ background: #0369a1; }}
-            .status {{ margin-top: 20px; text-align: center; font-size: 14px; color: #4ade80; }}
+            .footer-note {{ font-size: 12px; color: #94a3b8; text-align: center; margin-top: 15px; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>BotTrd - Configuração de API</h2>
-            <form action="/save" method="post">
-                <label>Bybit API Key:</label>
-                <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
-                
-                <label>Bybit API Secret:</label>
-                <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
-                
-                <div class="checkbox-group">
-                    <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
-                    <label style="margin:0;">Ativar Testnet (Modo de Testes)</label>
-                </div>
-                
-                <button type="submit">Guardar e Reiniciar Conexão</button>
-            </form>
-            <div class="status">Estado do Robô: A Executar Operações 24/7</div>
+            <h2>BotTrd Dashboard</h2>
+            <div class="badge">● {status_text}</div>
+
+            <div class="card">
+                <h3>Estado do Motor de Mercado</h3>
+                <p>{last_scan_status}</p>
+            </div>
+
+            <div class="card">
+                <h3>Posição Ativa</h3>
+                <p>{pos_html}</p>
+            </div>
+
+            <div class="card">
+                <h3>Atualizar Credenciais da Bybit</h3>
+                <form action="/save" method="post">
+                    <label>Bybit API Key:</label>
+                    <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
+                    
+                    <label>Bybit API Secret:</label>
+                    <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
+                    
+                    <div class="checkbox-group">
+                        <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
+                        <label style="margin:0;">Ativar Testnet (Modo de Testes)</label>
+                    </div>
+                    
+                    <button type="submit">Guardar e Reconectar</button>
+                </form>
+            </div>
+            <div class="footer-note">A página atualiza automaticamente a cada 15 segundos.</div>
         </div>
     </body>
     </html>
@@ -69,12 +103,13 @@ async def config_page(request: Request):
 async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), is_testnet: bool = Form(False)):
     config.save_config(api_key, api_secret, is_testnet)
     await exchange_mgr.update_credentials(api_key, api_secret, is_testnet)
+    # Redireciona de volta para o painel principal após guardar
     return """
     <html>
+    <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0f172a; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Configurações guardadas com sucesso!</h2>
-        <p>As novas chaves da Bybit foram aplicadas em tempo real.</p>
-        <a href="/" style="color:#38bdf8; text-decoration:none; font-size:18px;">← Voltar ao Painel</a>
+        <h2 style="color:#4ade80;">Chaves atualizadas com sucesso!</h2>
+        <p>A regressar ao painel principal...</p>
     </body>
     </html>
     """
@@ -83,12 +118,12 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), i
 # MOTOR DE TRADING EM BACKGROUND
 # ==========================================
 async def trading_loop():
-    global active_position, max_profit_reached
+    global active_position, max_profit_reached, last_scan_status
     logging.info("Motor de trading iniciado em segundo plano.")
     while True:
         try:
             if not exchange_mgr.exchange:
-                logging.warning("Aviso: Chaves da Bybit ainda não configuradas. Visite a aba de configuração no site.")
+                last_scan_status = "Aviso: Insira as chaves API válidas no painel abaixo."
                 await asyncio.sleep(10)
                 continue
 
@@ -111,12 +146,15 @@ async def trading_loop():
                         max_profit_reached = 0.0
 
             # 2. Varredura de Mercado
+            last_scan_status = "A escanear o mercado (BTC, ETH, SOL, BNB)..."
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
 
+            valid_scans = 0
             for symbol, ohlcv, current_price, _ in results:
                 if not ohlcv:
                     continue
+                valid_scans += 1
                 indicators = trading_engine.calculate_indicators(ohlcv)
                 signal = trading_engine.evaluate_signal(indicators)
 
@@ -129,7 +167,10 @@ async def trading_loop():
                         max_profit_reached = 0.0
                     break
 
+            last_scan_status = f"Escaneados {valid_scans} pares com sucesso. À procura de oportunidades..."
+
         except Exception as e:
+            last_scan_status = f"Erro no ciclo: {str(e)}"
             logging.error(f"Erro no ciclo de trading: {e}")
 
         await asyncio.sleep(config.SCAN_INTERVAL)
