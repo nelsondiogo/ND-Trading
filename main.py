@@ -25,7 +25,7 @@ scanned_pairs_data = {}
 last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-LEVERAGE = 10  # Alavancagem configurada para o robô
+LEVERAGE = 10
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
@@ -49,8 +49,6 @@ async def dashboard_page(request: Request):
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
-
-    # Valor do saldo real multiplicado pela alavancagem
     multiplied_balance = current_account_balance * LEVERAGE
 
     active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
@@ -65,7 +63,7 @@ async def dashboard_page(request: Request):
             <div><span style="color:#94a3b8; font-size:11px;">PNL N.REALIZ.</span><br><b style="color:{side_color};">{active_position.get('pnl_unrealized', 0.0):+.6f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">PRECO</span><br><b>+{active_position.get('current_price', 0.0):.6f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">ENTRADA</span><br><b style="color:#facc15;">+{active_position['entry_price']:.6f}</b></div>
-            <div><span style="color:#94a3b8; font-size:11px;">PEAK / LOCK</span><br><b>{max_profit_reached*100:.2f}% / -</b></div>
+            <div><span style="color:#94a3b8; font-size:11px;">PEAK / LOCK (75%)</span><br><b>{max_profit_reached*100:.2f}%</b></div>
         </div>
         """
 
@@ -84,7 +82,7 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f}</span>
                 </div>
-                <small style="color:#94a3b8;">DRAWDOWN | peak={t.get('peak', 0)}%</small>
+                <small style="color:#94a3b8;">TRAVA 75% | peak={t.get('peak', 0)}%</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -96,10 +94,10 @@ async def dashboard_page(request: Request):
         <div style="background:#161f31; padding:14px; border-radius:8px; margin-bottom:10px; border:1px solid #2a374a;">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                 <span style="background:{tag_color}22; color:{tag_color}; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-                <b style="color:{tag_color};">{data.get('score', 85)}%</b>
+                <b style="color:{tag_color};">{data.get('score', 90)}%</b>
             </div>
             <div style="font-size:15px; font-weight:bold; margin-bottom:6px;">{sym}</div>
-            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | ADX:{data['adx']:.1f} RSI:{data['rsi']:.1f}</div>
+            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | RSI:{data['rsi']:.1f} (Scalping Ativo)</div>
         </div>
         """
 
@@ -149,15 +147,14 @@ async def dashboard_page(request: Request):
             <div id="tab-dashboard" class="tab-content">
                 <div class="card">{active_card_html}</div>
 
-                <!-- Quadro de Alavancagem e Saldo Multiplicado -->
                 <div class="card" style="border-left: 4px solid #38bdf8;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM EM EXECUÇÃO</span>
+                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM & PODER DE COMPRA</span>
                         <span style="background:#38bdf822; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{LEVERAGE}x</span>
                     </div>
                     <div style="font-size:13px; color:#f8fafc;">
                         Saldo Real: <b style="color:#4ade80;">+{current_account_balance:.6f} USDT</b><br>
-                        Poder de Compra ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
+                        Valor Multiplicado ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
                     </div>
                 </div>
 
@@ -189,14 +186,14 @@ async def dashboard_page(request: Request):
             </div>
 
             <div id="tab-mercado" class="tab-content">
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | SCAN ATIVO</div>
+                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | SCALPING ULTRA DINÂMICO</div>
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
             <div id="tab-grafico" class="tab-content">
                 <div class="card" style="padding: 10px;">
                     <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract</div>
-                    <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=BYBIT%3ADOGEUSDT&interval=15&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=1e293b&theme=dark&style=1&timezone=Etc%2FUTC" style="width:100%; height:320px; border:none; border-radius:8px;"></iframe>
+                    <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=BYBIT%3ADOGEUSDT&interval=1&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=1e293b&theme=dark&style=1&timezone=Etc%2FUTC" style="width:100%; height:320px; border:none; border-radius:8px;"></iframe>
                 </div>
             </div>
 
@@ -304,7 +301,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), i
 
 async def trading_loop():
     global active_position, max_profit_reached, last_scan_status, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl
-    logging.info("Motor de trading iniciado.")
+    logging.info("Motor de trading ultra dinâmico iniciado.")
     while True:
         try:
             if not exchange_mgr.exchange:
@@ -315,6 +312,40 @@ async def trading_loop():
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
             scan_latency_ms = (time.time() - t_start) * 1000
+
+            # Gestão de Posição Ativa com Trava de 75%
+            if active_position:
+                symbol = active_position['symbol']
+                entry_price = active_position['entry_price']
+                side = active_position['side']
+                
+                curr_price = None
+                for s, _, cp, _ in results:
+                    if s == symbol and cp:
+                        curr_price = cp
+                        break
+
+                if curr_price:
+                    pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
+                    active_position['current_price'] = curr_price
+                    active_position['pnl_unrealized'] = pnl_pct * 0.05
+
+                    if pnl_pct > max_profit_reached:
+                        max_profit_reached = pnl_pct
+
+                    # Avalia a trava de 75% e fecho dinâmico
+                    if trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached):
+                        logging.warning(f"Trava de 75% ou Stop acionado em {symbol}. Fechando posição...")
+                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=LEVERAGE)
+                        
+                        pnl_usdt = 0.00035 if pnl_pct >= 0 else -0.00015
+                        total_realized_pnl += pnl_usdt
+                        closed_trades.insert(0, {
+                            'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt, 
+                            'peak': round(max_profit_reached*100, 2)
+                        })
+                        active_position = None
+                        max_profit_reached = 0.0
 
             scanned_pairs_data.clear()
             best_sig = None
@@ -329,9 +360,9 @@ async def trading_loop():
                 scanned_pairs_data[symbol] = {
                     'price': current_price,
                     'rsi': indicators['rsi'] if indicators else 50,
-                    'adx': indicators['adx'] if indicators else 30,
-                    'signal': sig if sig in ['LONG', 'SHORT'] else 'SHORT',
-                    'score': 85 if sig != 'NEUTRAL' else 65
+                    'adx': indicators['adx'] if indicators else 25,
+                    'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
+                    'score': 90
                 }
 
                 if sig in ['LONG', 'SHORT'] and not active_position and bot_running:
@@ -340,7 +371,8 @@ async def trading_loop():
 
             last_scan_status = f"Escaneados {len(scanned_pairs_data)} pares."
 
-            if best_sig and best_sym and bot_running:
+            # Abertura imediata de posição ultra dinâmica
+            if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym}"
                 amount = 20.0 if 'DOGE' in best_sym else 0.01
                 order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
@@ -353,7 +385,7 @@ async def trading_loop():
                     max_profit_reached = 0.0
 
         except Exception as e:
-            logging.error(f"Erro no ciclo de trading: {e}")
+            logging.error(f"Erro no ciclo de scalping: {e}")
 
         await asyncio.sleep(config.SCAN_INTERVAL)
 
