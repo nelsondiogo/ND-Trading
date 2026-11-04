@@ -32,14 +32,12 @@ class BybitExchangeManager:
         self._init_exchange()
 
     async def set_leverage(self, symbol: str, leverage: int = 10):
-        """Define a alavancagem para o par de futuros na Bybit."""
         try:
             await self.exchange.set_leverage(leverage, symbol)
         except Exception as e:
-            # Ignora caso a alavancagem já esteja definida na corretora
-            pass
+            pass  # Ignora se já estiver definida
 
-    async def fetch_market_data(self, symbol: str, timeframe: str = '5m', limit: int = 50):
+    async def fetch_market_data(self, symbol: str, timeframe: str = '1m', limit: int = 50):
         if not self.exchange:
             return symbol, None, None, 0.0
         start_time = time.time()
@@ -60,9 +58,13 @@ class BybitExchangeManager:
         try:
             await self.set_leverage(symbol, leverage)
             order_side = 'buy' if side.upper() == 'LONG' else 'sell'
-            return await self.exchange.create_order(symbol, 'market', order_side, amount)
+            
+            # Executa a ordem de mercado na Bybit
+            order = await self.exchange.create_order(symbol, 'market', order_side, amount)
+            logging.info(f"Ordem executada com sucesso em {symbol}: {order}")
+            return order
         except Exception as e:
-            logging.error(f"Erro ao executar ordem em {symbol}: {e}")
+            logging.error(f"ERRO CRÍTICO ao executar ordem em {symbol} ({amount}): {e}")
             return None
 
     async def close(self):
