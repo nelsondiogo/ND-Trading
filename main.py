@@ -40,19 +40,35 @@ async def dashboard_page(request: Request):
     current_leverage = current_conf.get("LEVERAGE", 10)
     
     if exchange_mgr and exchange_mgr.exchange:
+        balance_data = {}
         try:
-            balance_data = await exchange_mgr.exchange.fetch_balance()
-            if balance_data and 'USDT' in balance_data:
-                usdt_info = balance_data.get('USDT', {})
-                live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
-                
-                if not bot_running:
-                    initial_account_balance = live_bal
-                    current_account_balance = live_bal
-                else:
-                    current_account_balance = initial_account_balance + total_realized_pnl
-        except Exception as e:
-            logging.error(f"Erro ao ler saldo: {e}")
+            # Tenta ler da conta de derivados/linear da Bybit
+            balance_data = await exchange_mgr.exchange.fetch_balance({'accountType': 'UNIFIED'})
+        except Exception:
+            try:
+                balance_data = await exchange_mgr.exchange.fetch_balance()
+            except Exception as e:
+                logging.error(f"Erro ao ler saldo: {e}")
+
+        if balance_data:
+            usdt_info = balance_data.get('USDT', {})
+            live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or balance_data.get('free', {}).get('USDT', 0.0) or 0.0)
+            
+            if live_bal == 0.0 and 'info' in balance_data:
+                try:
+                    list_coins = balance_data['info'].get('result', {}).get('list', [])
+                    for account in list_coins:
+                        for coin in account.get('coin', []):
+                            if coin.get('coin') == 'USDT':
+                                live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
+                except Exception:
+                    pass
+
+            if not bot_running:
+                initial_account_balance = live_bal
+                current_account_balance = live_bal
+            else:
+                current_account_balance = initial_account_balance + total_realized_pnl
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
@@ -249,168 +265,3 @@ async def dashboard_page(request: Request):
         <div class="bottom-nav">
             <button class="nav-item" id="nav-dashboard" onclick="switchTab('dashboard')">
                 <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
-                Dashboard
-            </button>
-            <button class="nav-item" id="nav-mercado" onclick="switchTab('mercado')">
-                <svg viewBox="0 0 24 24"><path d="M3.5 18.49l6-6.01 4 4L22 6.92l-1.41-1.41-7.09 7.97-4-4L2 16.99z"/></svg>
-                Mercado
-            </button>
-            <button class="nav-item" id="nav-grafico" onclick="switchTab('grafico')">
-                <svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zM9 17H7v-7h2v7zm4 0h-2V7h2v10zm4 0h-2v-4h2v4z"/></svg>
-                Grafico
-            </button>
-            <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">
-                <svg viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42C8.27 19.99 10.51 21 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></svg>
-                Historico
-            </button>
-            <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">
-                <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
-                Ajustes
-            </button>
-        </div>
-
-        <script>
-            function switchTab(tabId) {{
-                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-                document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-                
-                document.getElementById('tab-' + tabId).classList.add('active');
-                document.getElementById('nav-' + tabId).classList.add('active');
-                localStorage.setItem('activeTab', tabId);
-            }}
-
-            window.onload = function() {{
-                const savedTab = localStorage.getItem('activeTab') || 'dashboard';
-                switchTab(savedTab);
-            }};
-        </script>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
-
-@app.post("/toggle_bot", response_class=HTMLResponse)
-async def toggle_bot():
-    global bot_running
-    bot_running = not bot_running
-    return """<html><meta http-equiv="refresh" content="0;url=/"><body></body></html>"""
-
-@app.post("/save", response_class=HTMLResponse)
-async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), leverage: int = Form(10), is_testnet: bool = Form(False)):
-    config.save_config(api_key, api_secret, is_testnet, leverage)
-    if exchange_mgr:
-        await exchange_mgr.update_credentials(api_key, api_secret, is_testnet)
-    return """
-    <html>
-    <meta http-equiv="refresh" content="1;url=/">
-    <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições e Alavancagem guardadas!</h2>
-        <p>A sincronizar com a Bybit...</p>
-    </body>
-    </html>
-    """
-
-async def trading_loop():
-    global active_position, max_profit_reached, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl
-    logging.info("Motor HFT iniciado (1 posição ativa com rotação dinâmica).")
-    
-    while True:
-        try:
-            if not exchange_mgr or not exchange_mgr.exchange:
-                await asyncio.sleep(3)
-                continue
-
-            current_conf = config.load_config()
-            leverage = current_conf.get("LEVERAGE", 10)
-
-            t_start = time.time()
-            tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
-            results = await asyncio.gather(*tasks)
-            scan_latency_ms = (time.time() - t_start) * 1000
-
-            scanned_pairs_data.clear()
-            best_sig = None
-            best_sym = None
-            highest_score = 0
-
-            for symbol, ohlcv, current_price, _ in results:
-                if not ohlcv or not current_price:
-                    continue
-                indicators = trading_engine.calculate_indicators(ohlcv)
-                if not indicators:
-                    continue
-                sig = trading_engine.evaluate_signal(indicators)
-                
-                score = 95 if abs(indicators['rsi'] - 50) > 15 else 85
-
-                scanned_pairs_data[symbol] = {
-                    'price': current_price,
-                    'rsi': indicators['rsi'],
-                    'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
-                    'score': score
-                }
-
-                if sig in ['LONG', 'SHORT'] and score > highest_score:
-                    highest_score = score
-                    best_sig = sig
-                    best_sym = symbol
-
-            if active_position:
-                symbol = active_position['symbol']
-                entry_price = active_position['entry_price']
-                side = active_position['side']
-                
-                curr_price = scanned_pairs_data.get(symbol, {}).get('price')
-
-                if curr_price:
-                    pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
-                    active_position['current_price'] = curr_price
-                    active_position['pnl_unrealized'] = pnl_pct * leverage
-
-                    if pnl_pct > max_profit_reached:
-                        max_profit_reached = pnl_pct
-
-                    should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
-                    
-                    if best_sym and best_sym != symbol and highest_score >= 95:
-                        logging.info(f"Rotação HFT: Fechando {symbol} para migrar para {best_sym}.")
-                        should_close = True
-
-                    if should_close and bot_running:
-                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
-                        
-                        pnl_usdt = 0.002 if pnl_pct >= 0 else -0.0005
-                        total_realized_pnl += pnl_usdt
-                        closed_trades.insert(0, {
-                            'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt, 
-                            'peak': round(max_profit_reached*100, 2)
-                        })
-                        active_position = None
-                        max_profit_reached = 0.0
-
-            if best_sig and best_sym and bot_running and not active_position:
-                last_signal_text = f"{best_sig} {best_sym} ({highest_score}%)"
-                amount = 5.0 if 'DOGE' in best_sym else (2.0 if 'PEPE' in best_sym or 'SHIB' in best_sym else 1.0)
-                
-                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
-                if order:
-                    active_position = {
-                        'symbol': best_sym, 'side': best_sig, 
-                        'entry_price': scanned_pairs_data[best_sym]['price'], 
-                        'amount': amount,
-                        'score': highest_score
-                    }
-                    max_profit_reached = 0.0
-
-        except Exception as e:
-            logging.error(f"Erro no ciclo HFT: {e}")
-
-        await asyncio.sleep(config.SCAN_INTERVAL)
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(trading_loop())
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
