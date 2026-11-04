@@ -31,18 +31,23 @@ async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
     
-    # Leitura real do saldo da Bybit com tratamento robusto
+    # Leitura de saldo real da Bybit
     if exchange_mgr.exchange:
         try:
             balance_data = await exchange_mgr.exchange.fetch_balance()
-            if 'info' in balance_data or 'USDT' in balance_data:
+            if 'USDT' in balance_data:
                 usdt_info = balance_data.get('USDT', {})
-                free_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
-                if initial_account_balance == 0.0 and free_bal > 0:
-                    initial_account_balance = free_bal
-                current_account_balance = free_bal
+                live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
+                
+                # Se o bot estiver parado, o saldo inicial e atual acompanham a corretora
+                if not bot_running:
+                    initial_account_balance = live_bal
+                    current_account_balance = live_bal
+                else:
+                    # Se estiver a operar, o atual reflete o ganho/perda sobre o inicial
+                    current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
-            logging.error(f"Erro ao ler saldo da corretora: {e}")
+            logging.error(f"Erro ao ler saldo: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
@@ -90,7 +95,7 @@ async def dashboard_page(request: Request):
         <div style="background:#161f31; padding:14px; border-radius:8px; margin-bottom:10px; border:1px solid #2a374a;">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                 <span style="background:{tag_color}22; color:{tag_color}; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-                <b style="color:{tag_color};">{data.get('score', 80)}%</b>
+                <b style="color:{tag_color};">{data.get('score', 85)}%</b>
             </div>
             <div style="font-size:15px; font-weight:bold; margin-bottom:6px;">{sym}</div>
             <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | ADX:{data['adx']:.1f} RSI:{data['rsi']:.1f}</div>
