@@ -25,14 +25,13 @@ scanned_pairs_data = {}
 last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-LEVERAGE = 10
+LEVERAGE = 10  # Alavancagem configurada para o robô
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
     
-    # 1. Leitura Segura do Saldo
     if exchange_mgr.exchange:
         try:
             balance_data = await exchange_mgr.exchange.fetch_balance()
@@ -40,20 +39,20 @@ async def dashboard_page(request: Request):
                 usdt_info = balance_data.get('USDT', {})
                 live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
                 
-                # Quando PARADO: Saldo inicial e atual acompanham a corretora
                 if not bot_running:
                     initial_account_balance = live_bal
                     current_account_balance = live_bal
                 else:
-                    # Quando a OPERAR: Saldo atual reflete o inicial + PnL das operações
                     current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
-            logging.error(f"Erro ao ler saldo na rota principal: {e}")
+            logging.error(f"Erro ao ler saldo: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
 
-    # HTML Posição Ativa
+    # Valor do saldo real multiplicado pela alavancagem
+    multiplied_balance = current_account_balance * LEVERAGE
+
     active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
     if active_position:
         side_color = "#f87171" if active_position['side'] == 'SHORT' else "#4ade80"
@@ -70,7 +69,6 @@ async def dashboard_page(request: Request):
         </div>
         """
 
-    # HTML Histórico
     trades_html = ""
     wins = 0
     if not closed_trades:
@@ -91,7 +89,6 @@ async def dashboard_page(request: Request):
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
 
-    # HTML Mercado
     mercado_html = ""
     for sym, data in scanned_pairs_data.items():
         tag_color = "#f87171" if data['signal'] == 'SHORT' else "#4ade80"
@@ -112,7 +109,6 @@ async def dashboard_page(request: Request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="refresh" content="10">
         <title>nd-bot v8</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 90px; }}
@@ -153,6 +149,18 @@ async def dashboard_page(request: Request):
             <div id="tab-dashboard" class="tab-content">
                 <div class="card">{active_card_html}</div>
 
+                <!-- Quadro de Alavancagem e Saldo Multiplicado -->
+                <div class="card" style="border-left: 4px solid #38bdf8;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM EM EXECUÇÃO</span>
+                        <span style="background:#38bdf822; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{LEVERAGE}x</span>
+                    </div>
+                    <div style="font-size:13px; color:#f8fafc;">
+                        Saldo Real: <b style="color:#4ade80;">+{current_account_balance:.6f} USDT</b><br>
+                        Poder de Compra ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
+                    </div>
+                </div>
+
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
                     <div class="card" style="margin-bottom:0;">
                         <span style="color:#94a3b8; font-size:11px;">STATUS</span>
@@ -175,11 +183,6 @@ async def dashboard_page(request: Request):
                     </div>
                 </div>
 
-                <div class="card">
-                    <span style="color:#94a3b8; font-size:11px; display:block; margin-bottom:8px;">EVOLUCAO PNL (USDT)</span>
-                    <div style="background:#0b0f19; height:110px; border-radius:6px; border:1px solid #2a374a;"></div>
-                </div>
-
                 <form action="/toggle_bot" method="post">
                     <button type="submit" style="background:{('#ef4444' if bot_running else '#22c55e')};">{('PARAR ROBÔ' if bot_running else 'INICIAR ROBÔ')}</button>
                 </form>
@@ -190,7 +193,6 @@ async def dashboard_page(request: Request):
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
-            <!-- ABA 3: GRAFICO COM TRADINGVIEW EM TEMPO REAL -->
             <div id="tab-grafico" class="tab-content">
                 <div class="card" style="padding: 10px;">
                     <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract</div>
