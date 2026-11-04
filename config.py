@@ -1,29 +1,40 @@
 import os
-from dotenv import load_dotenv
+import json
 
-load_dotenv()
+CONFIG_FILE = "config.json"
 
-# ==========================================
-# CONFIGURAÇÃO DIRETA DE API E CREDENCIAIS
-# ==========================================
-# Podes inserir as tuas chaves da Bybit diretamente aqui entre as aspas,
-# ou manter o os.getenv para puxar do Render/ambiente de forma segura.
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "AQUI_A_TUA_API_KEY_DA_BYBIT")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "AQUI_O_TEU_API_SECRET_DA_BYBIT")
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "BYBIT_API_KEY": "",
+        "BYBIT_API_SECRET": "",
+        "IS_TESTNET": False
+    }
 
-# Altera para "false" se fores usar conta real (Mainnet), ou "true" para testes (Testnet)
-IS_TESTNET = os.getenv("IS_TESTNET", "true").lower() == "true"
+def save_config(api_key, api_secret, is_testnet):
+    config_data = {
+        "BYBIT_API_KEY": api_key,
+        "BYBIT_API_SECRET": api_secret,
+        "IS_TESTNET": is_testnet
+    }
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config_data, f, indent=4)
 
-# Pares de moedas monitorizados em simultâneo
-PAIRS = [
-    "BTC/USDT:USDT",
-    "ETH/USDT:USDT",
-    "SOL/USDT:USDT",
-    "BNB/USDT:USDT"
-]
+# Carrega definições iniciais
+_current_config = load_config()
 
-# Configurações de Gestão de Risco e Estratégia
-SCAN_INTERVAL = 18                  # Intervalo de scan (15 a 20 segundos)
-ADX_THRESHOLD = 25.0                # Força mínima de tendência
-TRAILING_ACTIVATION_THRESHOLD = 0.01  # Ativa o trailing stop ao atingir +1%
-TRAILING_DRAWDOWN_PERCENT = 0.30      # Fecha se o lucro recuar 30% do pico máximo
+BYBIT_API_KEY = _current_config["BYBIT_API_KEY"]
+BYBIT_API_SECRET = _current_config["BYBIT_API_SECRET"]
+IS_TESTNET = _current_config["IS_TESTNET"]
+
+# Pares e parâmetros fixos de trading
+PAIRS = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT"]
+SCAN_INTERVAL = 18
+ADX_THRESHOLD = 25.0
+TRAILING_ACTIVATION_THRESHOLD = 0.01
+TRAILING_DRAWDOWN_PERCENT = 0.30
