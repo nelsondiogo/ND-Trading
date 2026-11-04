@@ -21,7 +21,7 @@ class BybitExchangeManager:
         })
         if self.testnet:
             self.exchange.set_sandbox_mode(True)
-        logging.info("BybitExchangeManager inicializado.")
+        logging.info(f"BybitExchangeManager inicializado (Testnet={self.testnet}).")
 
     async def update_credentials(self, api_key, api_secret, testnet):
         if self.exchange:
@@ -49,7 +49,6 @@ class BybitExchangeManager:
             latency = (time.time() - start_time) * 1000
             return symbol, ohlcv, ticker['last'], latency
         except Exception as e:
-            logging.error(f"Erro ao obter dados para {symbol}: {e}")
             return symbol, None, None, 0.0
 
     async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int):
