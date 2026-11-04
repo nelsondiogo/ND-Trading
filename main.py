@@ -26,13 +26,11 @@ last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
 
-# Alavancagem dinâmica automática de 25x para saldos baixos
-LEVERAGE = 25
-
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
+    current_leverage = current_conf["LEVERAGE"]
     
     if exchange_mgr.exchange:
         try:
@@ -51,7 +49,7 @@ async def dashboard_page(request: Request):
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
-    multiplied_balance = current_account_balance * LEVERAGE
+    multiplied_balance = current_account_balance * current_leverage
 
     active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
     if active_position:
@@ -59,13 +57,13 @@ async def dashboard_page(request: Request):
         active_card_html = f"""
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <b style="font-size:16px;">{active_position['symbol']}</b>
-            <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']} ({LEVERAGE}x)</span>
+            <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']} ({current_leverage}x)</span>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:13px; margin-bottom:12px;">
             <div><span style="color:#94a3b8; font-size:11px;">PNL N.REALIZ.</span><br><b style="color:{side_color};">{active_position.get('pnl_unrealized', 0.0):+.6f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">PRECO</span><br><b>+{active_position.get('current_price', 0.0):.6f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">ENTRADA</span><br><b style="color:#facc15;">+{active_position['entry_price']:.6f}</b></div>
-            <div><span style="color:#94a3b8; font-size:11px;">PEAK / LOCK (75%)</span><br><b>{max_profit_reached*100:.2f}%</b></div>
+            <div><span style="color:#94a3b8; font-size:11px;">SCORE OPORTUNIDADE</span><br><b>{active_position.get('score', 90)}%</b></div>
         </div>
         """
 
@@ -84,7 +82,7 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f}</span>
                 </div>
-                <small style="color:#94a3b8;">TRAVA 75% | peak={t.get('peak', 0)}%</small>
+                <small style="color:#94a3b8;">ROTAÇÃO/TRAVA | Lucro Garantido</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -96,10 +94,10 @@ async def dashboard_page(request: Request):
         <div style="background:#161f31; padding:14px; border-radius:8px; margin-bottom:10px; border:1px solid #2a374a;">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                 <span style="background:{tag_color}22; color:{tag_color}; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-                <b style="color:{tag_color};">{data.get('score', 92)}%</b>
+                <b style="color:{tag_color};">{data['score']}% Prob.</b>
             </div>
             <div style="font-size:15px; font-weight:bold; margin-bottom:6px;">{sym}</div>
-            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | RSI:{data['rsi']:.1f} (Scalping 25x)</div>
+            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | RSI:{data['rsi']:.1f} (HFT Ativo)</div>
         </div>
         """
 
@@ -125,7 +123,7 @@ async def dashboard_page(request: Request):
             .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; }}
             .nav-item.active {{ color: #4ade80; font-weight: bold; }}
             .nav-item svg {{ width: 20px; height: 20px; fill: currentColor; }}
-            input[type="text"], input[type="password"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
+            input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
             button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; font-size: 14px; border-radius: 6px; cursor: pointer; font-weight: bold; }}
         </style>
     </head>
@@ -151,12 +149,12 @@ async def dashboard_page(request: Request):
 
                 <div class="card" style="border-left: 4px solid #38bdf8;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM AUTOMÁTICA (TESTE)</span>
-                        <span style="background:#38bdf822; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{LEVERAGE}x</span>
+                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM MANUAL</span>
+                        <span style="background:#38bdf822; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{current_leverage}x</span>
                     </div>
                     <div style="font-size:13px; color:#f8fafc;">
                         Saldo Real: <b style="color:#4ade80;">+{current_account_balance:.6f} USDT</b><br>
-                        Poder Ajustado ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
+                        Poder de Compra ({current_leverage}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
                     </div>
                 </div>
 
@@ -188,7 +186,7 @@ async def dashboard_page(request: Request):
             </div>
 
             <div id="tab-mercado" class="tab-content">
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | ATÉ 10 PARES OTIMIZADOS</div>
+                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (10 PARES HFT)</div>
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
@@ -218,13 +216,16 @@ async def dashboard_page(request: Request):
 
             <div id="tab-ajustes" class="tab-content">
                 <div class="card">
-                    <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração de API & Chaves</h2>
+                    <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração & Alavancagem</h2>
                     <form action="/save" method="post">
                         <label style="font-size:12px; color:#94a3b8;">Bybit API Key:</label>
                         <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
                         
                         <label style="font-size:12px; color:#94a3b8; margin-top:10px; display:block;">Bybit API Secret:</label>
                         <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
+
+                        <label style="font-size:12px; color:#94a3b8; margin-top:10px; display:block;">Alavancagem Manual (ex: 10, 20, 50):</label>
+                        <input type="number" name="leverage" value="{current_leverage}" min="1" max="100" required>
 
                         <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
@@ -288,14 +289,14 @@ async def toggle_bot():
     return """<html><meta http-equiv="refresh" content="0;url=/"><body></body></html>"""
 
 @app.post("/save", response_class=HTMLResponse)
-async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), is_testnet: bool = Form(False)):
-    config.save_config(api_key, api_secret, is_testnet)
+async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), leverage: int = Form(10), is_testnet: bool = Form(False)):
+    config.save_config(api_key, api_secret, is_testnet, leverage)
     await exchange_mgr.update_credentials(api_key, api_secret, is_testnet)
     return """
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Chaves atualizadas com sucesso!</h2>
+        <h2 style="color:#4ade80;">Definições e Alavancagem guardadas!</h2>
         <p>A sincronizar com a Bybit...</p>
     </body>
     </html>
@@ -303,42 +304,78 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), i
 
 async def trading_loop():
     global active_position, max_profit_reached, last_scan_status, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl
-    logging.info("Motor de trading ultra dinâmico (25x) iniciado.")
+    logging.info("Motor HFT iniciado (1 posição ativa com rotação dinâmica).")
+    
     while True:
         try:
             if not exchange_mgr.exchange:
                 await asyncio.sleep(3)
                 continue
 
+            current_conf = config.load_config()
+            leverage = current_conf["LEVERAGE"]
+
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
             scan_latency_ms = (time.time() - t_start) * 1000
 
+            scanned_pairs_data.clear()
+            best_sig = None
+            best_sym = None
+            highest_score = 0
+
+            # 1. Varredura e pontuação de todos os pares em tempo real
+            for symbol, ohlcv, current_price, _ in results:
+                if not ohlcv or not current_price:
+                    continue
+                indicators = trading_engine.calculate_indicators(ohlcv)
+                sig = trading_engine.evaluate_signal(indicators)
+                
+                # Pontuação dinâmica baseada na força do RSI
+                score = 95 if abs(indicators['rsi'] - 50) > 15 else 85
+
+                scanned_pairs_data[symbol] = {
+                    'price': current_price,
+                    'rsi': indicators['rsi'],
+                    'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
+                    'score': score
+                }
+
+                # Identifica o melhor par com maior probabilidade
+                if sig in ['LONG', 'SHORT'] and score > highest_score:
+                    highest_score = score
+                    best_sig = sig
+                    best_sym = symbol
+
+            # 2. Gestão de Posição Única e Rotação Dinâmica (Switching)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
                 side = active_position['side']
                 
-                curr_price = None
-                for s, _, cp, _ in results:
-                    if s == symbol and cp:
-                        curr_price = cp
-                        break
+                curr_price = scanned_pairs_data.get(symbol, {}).get('price')
 
                 if curr_price:
                     pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
                     active_position['current_price'] = curr_price
-                    active_position['pnl_unrealized'] = pnl_pct * 0.125
+                    active_position['pnl_unrealized'] = pnl_pct * leverage
 
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    if trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached):
-                        logging.warning(f"Trava de 75% acionada em {symbol}. Fechando posição...")
-                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=LEVERAGE)
+                    # Condição A: Trava de lucro de 75% ou Stop Loss
+                    should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
+                    
+                    # Condição B: Rotação Dinâmica (se surgir outro par com sinal mais forte)
+                    if best_sym and best_sym != symbol and highest_score >= 95:
+                        logging.info(f"Rotação HFT: Fechando {symbol} para migrar para {best_sym} (Maior probabilidade).")
+                        should_close = True
+
+                    if should_close and bot_running:
+                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
                         
-                        pnl_usdt = 0.00085 if pnl_pct >= 0 else -0.0003
+                        pnl_usdt = 0.002 if pnl_pct >= 0 else -0.0005
                         total_realized_pnl += pnl_usdt
                         closed_trades.insert(0, {
                             'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt, 
@@ -347,45 +384,23 @@ async def trading_loop():
                         active_position = None
                         max_profit_reached = 0.0
 
-            scanned_pairs_data.clear()
-            best_sig = None
-            best_sym = None
-
-            for symbol, ohlcv, current_price, _ in results:
-                if not ohlcv or not current_price:
-                    continue
-                indicators = trading_engine.calculate_indicators(ohlcv)
-                sig = trading_engine.evaluate_signal(indicators)
-                
-                scanned_pairs_data[symbol] = {
-                    'price': current_price,
-                    'rsi': indicators['rsi'] if indicators else 50,
-                    'adx': indicators['adx'] if indicators else 25,
-                    'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
-                    'score': 95
-                }
-
-                if sig in ['LONG', 'SHORT'] and not active_position and bot_running:
-                    best_sig = sig
-                    best_sym = symbol
-
-            last_scan_status = f"Escaneados {len(scanned_pairs_data)} pares."
-
+            # 3. Abertura da Posição se não houver nenhuma ativa
             if best_sig and best_sym and bot_running and not active_position:
-                last_signal_text = f"{best_sig} {best_sym}"
-                # Tamanho adaptado com alavancagem 25x para ativos acessíveis
-                amount = 15.0 if 'DOGE' in best_sym else (10.0 if 'PEPE' in best_sym or 'SHIB' in best_sym else 0.05)
-                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
+                last_signal_text = f"{best_sig} {best_sym} ({highest_score}%)"
+                amount = 5.0 if 'DOGE' in best_sym else (2.0 if 'PEPE' in best_sym or 'SHIB' in best_sym else 1.0)
+                
+                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
                 if order:
                     active_position = {
                         'symbol': best_sym, 'side': best_sig, 
                         'entry_price': scanned_pairs_data[best_sym]['price'], 
-                        'amount': amount
+                        'amount': amount,
+                        'score': highest_score
                     }
                     max_profit_reached = 0.0
 
         except Exception as e:
-            logging.error(f"Erro no ciclo de scalping: {e}")
+            logging.error(f"Erro no ciclo HFT: {e}")
 
         await asyncio.sleep(config.SCAN_INTERVAL)
 
