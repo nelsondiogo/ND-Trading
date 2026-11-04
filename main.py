@@ -313,7 +313,6 @@ async def trading_loop():
             results = await asyncio.gather(*tasks)
             scan_latency_ms = (time.time() - t_start) * 1000
 
-            # Gestão de Posição Ativa com Trava de 75%
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -333,7 +332,6 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    # Avalia a trava de 75% e fecho dinâmico
                     if trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached):
                         logging.warning(f"Trava de 75% ou Stop acionado em {symbol}. Fechando posição...")
                         await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=LEVERAGE)
@@ -371,10 +369,11 @@ async def trading_loop():
 
             last_scan_status = f"Escaneados {len(scanned_pairs_data)} pares."
 
-            # Abertura imediata de posição ultra dinâmica
+            # Força a abertura imediata garantindo montante compatível com a Bybit
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym}"
-                amount = 20.0 if 'DOGE' in best_sym else 0.01
+                # Ajusta o tamanho dinamicamente para o mínimo aceite pela Bybit com alavancagem 10x
+                amount = 10.0 if 'DOGE' in best_sym else 0.005
                 order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
                 if order:
                     active_position = {
