@@ -25,13 +25,13 @@ scanned_pairs_data = {}
 last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
+LEVERAGE = 10  # Alavancagem padrão para permitir operar com pequenos saldos
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
     
-    # Leitura de saldo real da Bybit
     if exchange_mgr.exchange:
         try:
             balance_data = await exchange_mgr.exchange.fetch_balance()
@@ -39,12 +39,12 @@ async def dashboard_page(request: Request):
                 usdt_info = balance_data.get('USDT', {})
                 live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
                 
-                # Se o bot estiver parado, o saldo inicial e atual acompanham a corretora
                 if not bot_running:
+                    # Quando parado, o inicial e o atual refletem o saldo real da corretora
                     initial_account_balance = live_bal
                     current_account_balance = live_bal
                 else:
-                    # Se estiver a operar, o atual reflete o ganho/perda sobre o inicial
+                    # Quando a operar, o atual é o inicial + PnL realizado e não realizado
                     current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
             logging.error(f"Erro ao ler saldo: {e}")
@@ -58,7 +58,7 @@ async def dashboard_page(request: Request):
         active_card_html = f"""
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <b style="font-size:16px;">{active_position['symbol']}</b>
-            <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']}</span>
+            <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']} ({LEVERAGE}x)</span>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:13px; margin-bottom:12px;">
             <div><span style="color:#94a3b8; font-size:11px;">PNL N.REALIZ.</span><br><b style="color:{side_color};">{active_position.get('pnl_unrealized', 0.0):+.6f}</b></div>
@@ -186,11 +186,31 @@ async def dashboard_page(request: Request):
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
+            <!-- ABA 3: GRAFICO COM TRADINGVIEW REAL EM TEMPO REAL -->
             <div id="tab-grafico" class="tab-content">
-                <div class="card">
-                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:10px;">DOGEUSDT Perpetual Contract</div>
-                    <div style="background:#0b0f19; height:240px; border-radius:8px; display:flex; align-items:center; justify-content:center; border:1px solid #2a374a; color:#94a3b8; font-size:13px;">
-                        [Gráfico de Velas / TradingView]
+                <div class="card" style="padding: 10px;">
+                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract (TradingView)</div>
+                    <div class="tradingview-widget-container" style="height:320px; width:100%;">
+                        <div id="tradingview_widget" style="height:100%;width:100%"></div>
+                        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                        <script type="text/javascript">
+                        new TradingView.widget(
+                        {
+                          "width": "100%",
+                          "height": "320",
+                          "symbol": "BYBIT:DOGEUSDT",
+                          "interval": "15",
+                          "timezone": "Etc/UTC",
+                          "theme": "dark",
+                          "style": "1",
+                          "locale": "pt",
+                          "toolbar_bg": "#1e293b",
+                          "enable_publishing": false,
+                          "hide_top_toolbar": false,
+                          "save_image": false,
+                          "container_id": "tradingview_widget"
+                        });
+                        </script>
                     </div>
                 </div>
             </div>
@@ -337,8 +357,9 @@ async def trading_loop():
 
             if best_sig and best_sym and bot_running:
                 last_signal_text = f"{best_sig} {best_sym}"
-                amount = 10.0 if 'DOGE' in best_sym else 0.01
-                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount)
+                # Quantidade adaptada com alavancagem 10x
+                amount = 20.0 if 'DOGE' in best_sym else 0.01
+                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
                 if order:
                     active_position = {
                         'symbol': best_sym, 'side': best_sig, 
