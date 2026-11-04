@@ -41,7 +41,6 @@ async def dashboard_page(request: Request):
     
     if exchange_mgr and exchange_mgr.exchange:
         try:
-            # Leitura robusta forçando a carteira de Derivados/Linear/Unified da Bybit
             balance_data = {}
             try:
                 balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
@@ -310,12 +309,24 @@ async def trading_loop():
 
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym}"
-                amount = 5.0 if 'DOGE' in best_sym else 1.0
+                curr_price = scanned_pairs_data[best_sym]['price']
+                
+                # Cálculo dinâmico da quantidade com base no saldo real e alavancagem
+                # Usa 80% do saldo total com alavancagem para abrir a posição com segurança
+                usable_balance = max(0.1, current_account_balance)
+                target_notional = usable_balance * leverage * 0.8
+                amount = target_notional / curr_price
+                
+                # Arredondamento seguro por moeda
+                amount = round(amount, 1 if 'DOGE' in best_sym or 'XRP' in best_sym else 3)
+                if amount <= 0:
+                    amount = 1.0
+
                 order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
                 if order:
                     active_position = {
                         'symbol': best_sym, 'side': best_sig,
-                        'entry_price': scanned_pairs_data[best_sym]['price'],
+                        'entry_price': curr_price,
                         'amount': amount, 'score': highest_score
                     }
                     max_profit_reached = 0.0
