@@ -41,10 +41,27 @@ async def dashboard_page(request: Request):
     
     if exchange_mgr and exchange_mgr.exchange:
         try:
-            balance_data = await exchange_mgr.exchange.fetch_balance()
+            # Leitura robusta forçando a carteira de Derivados/Linear/Unified da Bybit
+            balance_data = {}
+            try:
+                balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
+            except Exception:
+                try:
+                    balance_data = await exchange_mgr.exchange.fetch_balance({'accountType': 'UNIFIED'})
+                except Exception:
+                    balance_data = await exchange_mgr.exchange.fetch_balance()
+
             if balance_data and 'USDT' in balance_data:
                 usdt_info = balance_data.get('USDT', {})
                 live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
+                
+                if live_bal == 0.0 and 'info' in balance_data:
+                    result_list = balance_data['info'].get('result', {}).get('list', [])
+                    for acc in result_list:
+                        for coin in acc.get('coin', []):
+                            if coin.get('coin') == 'USDT':
+                                live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
+
                 if not bot_running:
                     initial_account_balance = live_bal
                     current_account_balance = live_bal
@@ -94,7 +111,7 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f} USDT</span>
                 </div>
-                <small style="color:#94a3b8;">Fechado com sucesso por rotação/trava</small>
+                <small style="color:#94a3b8;">Fechado com sucesso</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -149,13 +166,6 @@ async def dashboard_page(request: Request):
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p>"}
             </div>
 
-            <div id="tab-grafico" class="tab-content">
-                <div class="card" style="padding: 10px;">
-                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:8px;">DOGEUSDT Perpetual Contract</div>
-                    <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_widget&symbol=BYBIT%3ADOGEUSDT&interval=1&hidesidetoolbar=1&symboledit=1&saveimage=0&toolbarbg=1e293b&theme=dark&style=1&timezone=Etc%2FUTC" style="width:100%; height:300px; border:none; border-radius:8px;"></iframe>
-                </div>
-            </div>
-
             <div id="tab-historico" class="tab-content">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
                     <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b style="color:#4ade80; font-size:15px;">+{total_realized_pnl:.6f}</b></div>
@@ -190,7 +200,6 @@ async def dashboard_page(request: Request):
         <div class="bottom-nav">
             <button class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">Dashboard</button>
             <button class="nav-item" id="nav-mercado" onclick="switchTab('mercado')">Mercado</button>
-            <button class="nav-item" id="nav-grafico" onclick="switchTab('grafico')">Gráfico</button>
             <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">Histórico</button>
             <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">Ajustes</button>
         </div>
