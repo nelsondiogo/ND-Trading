@@ -1,6 +1,5 @@
 import os
 
-# Lista dinâmica de 10 pares de alta liquidez para scalping
 PAIRS = [
     'DOGE/USDT:USDT',
     'XRP/USDT:USDT',
@@ -14,9 +13,7 @@ PAIRS = [
     'RENDER/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2  # Alta frequência (varredura a cada 2 segundos)
-
-# Alavancagem manual configurável (pode ser ajustada pelo utilizador)
+SCAN_INTERVAL = 2
 USER_LEVERAGE = 10 
 
 def load_config():
