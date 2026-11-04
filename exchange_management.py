@@ -31,11 +31,12 @@ class BybitExchangeManager:
         self.testnet = testnet
         self._init_exchange()
 
-    async def set_leverage(self, symbol: str, leverage: int = 10):
+    async def set_leverage(self, symbol: str, leverage: int = 25):
+        """Ajusta automaticamente a alavancagem até 25x para pequenos saldos."""
         try:
             await self.exchange.set_leverage(leverage, symbol)
         except Exception as e:
-            pass  # Ignora se já estiver definida
+            pass  # Ignora se já estiver configurada na corretora
 
     async def fetch_market_data(self, symbol: str, timeframe: str = '1m', limit: int = 50):
         if not self.exchange:
@@ -49,22 +50,19 @@ class BybitExchangeManager:
             latency = (time.time() - start_time) * 1000
             return symbol, ohlcv, ticker['last'], latency
         except Exception as e:
-            logging.error(f"Erro ao obter dados para {symbol}: {e}")
             return symbol, None, None, 0.0
 
-    async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int = 10):
+    async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int = 25):
         if not self.exchange:
             return None
         try:
             await self.set_leverage(symbol, leverage)
             order_side = 'buy' if side.upper() == 'LONG' else 'sell'
-            
-            # Executa a ordem de mercado na Bybit
             order = await self.exchange.create_order(symbol, 'market', order_side, amount)
-            logging.info(f"Ordem executada com sucesso em {symbol}: {order}")
+            logging.info(f"Ordem executada em {symbol}: {order}")
             return order
         except Exception as e:
-            logging.error(f"ERRO CRÍTICO ao executar ordem em {symbol} ({amount}): {e}")
+            logging.error(f"Erro ao executar ordem em {symbol}: {e}")
             return None
 
     async def close(self):
