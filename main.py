@@ -325,14 +325,14 @@ async def trading_loop():
             best_sym = None
             highest_score = 0
 
-            # 1. Varredura e pontuação de todos os pares em tempo real
             for symbol, ohlcv, current_price, _ in results:
                 if not ohlcv or not current_price:
                     continue
                 indicators = trading_engine.calculate_indicators(ohlcv)
+                if not indicators:
+                    continue
                 sig = trading_engine.evaluate_signal(indicators)
                 
-                # Pontuação dinâmica baseada na força do RSI
                 score = 95 if abs(indicators['rsi'] - 50) > 15 else 85
 
                 scanned_pairs_data[symbol] = {
@@ -342,13 +342,11 @@ async def trading_loop():
                     'score': score
                 }
 
-                # Identifica o melhor par com maior probabilidade
                 if sig in ['LONG', 'SHORT'] and score > highest_score:
                     highest_score = score
                     best_sig = sig
                     best_sym = symbol
 
-            # 2. Gestão de Posição Única e Rotação Dinâmica (Switching)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -364,12 +362,10 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    # Condição A: Trava de lucro de 75% ou Stop Loss
                     should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
                     
-                    # Condição B: Rotação Dinâmica (se surgir outro par com sinal mais forte)
                     if best_sym and best_sym != symbol and highest_score >= 95:
-                        logging.info(f"Rotação HFT: Fechando {symbol} para migrar para {best_sym} (Maior probabilidade).")
+                        logging.info(f"Rotação HFT: Fechando {symbol} para migrar para {best_sym}.")
                         should_close = True
 
                     if should_close and bot_running:
@@ -384,7 +380,6 @@ async def trading_loop():
                         active_position = None
                         max_profit_reached = 0.0
 
-            # 3. Abertura da Posição se não houver nenhuma ativa
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym} ({highest_score}%)"
                 amount = 5.0 if 'DOGE' in best_sym else (2.0 if 'PEPE' in best_sym or 'SHIB' in best_sym else 1.0)
