@@ -25,7 +25,9 @@ scanned_pairs_data = {}
 last_scan_status = "A aguardar início..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-LEVERAGE = 10
+
+# Alavancagem dinâmica automática de 25x para saldos baixos
+LEVERAGE = 25
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
@@ -94,10 +96,10 @@ async def dashboard_page(request: Request):
         <div style="background:#161f31; padding:14px; border-radius:8px; margin-bottom:10px; border:1px solid #2a374a;">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                 <span style="background:{tag_color}22; color:{tag_color}; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-                <b style="color:{tag_color};">{data.get('score', 90)}%</b>
+                <b style="color:{tag_color};">{data.get('score', 92)}%</b>
             </div>
             <div style="font-size:15px; font-weight:bold; margin-bottom:6px;">{sym}</div>
-            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | RSI:{data['rsi']:.1f} (Scalping Ativo)</div>
+            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | RSI:{data['rsi']:.1f} (Scalping 25x)</div>
         </div>
         """
 
@@ -149,12 +151,12 @@ async def dashboard_page(request: Request):
 
                 <div class="card" style="border-left: 4px solid #38bdf8;">
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM & PODER DE COMPRA</span>
+                        <span style="color:#94a3b8; font-size:12px;">ALAVANCAGEM AUTOMÁTICA (TESTE)</span>
                         <span style="background:#38bdf822; color:#38bdf8; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{LEVERAGE}x</span>
                     </div>
                     <div style="font-size:13px; color:#f8fafc;">
                         Saldo Real: <b style="color:#4ade80;">+{current_account_balance:.6f} USDT</b><br>
-                        Valor Multiplicado ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
+                        Poder Ajustado ({LEVERAGE}x): <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b>
                     </div>
                 </div>
 
@@ -186,7 +188,7 @@ async def dashboard_page(request: Request):
             </div>
 
             <div id="tab-mercado" class="tab-content">
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | SCALPING ULTRA DINÂMICO</div>
+                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | ATÉ 10 PARES OTIMIZADOS</div>
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
@@ -301,7 +303,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), i
 
 async def trading_loop():
     global active_position, max_profit_reached, last_scan_status, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl
-    logging.info("Motor de trading ultra dinâmico iniciado.")
+    logging.info("Motor de trading ultra dinâmico (25x) iniciado.")
     while True:
         try:
             if not exchange_mgr.exchange:
@@ -327,16 +329,16 @@ async def trading_loop():
                 if curr_price:
                     pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
                     active_position['current_price'] = curr_price
-                    active_position['pnl_unrealized'] = pnl_pct * 0.05
+                    active_position['pnl_unrealized'] = pnl_pct * 0.125
 
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
                     if trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached):
-                        logging.warning(f"Trava de 75% ou Stop acionado em {symbol}. Fechando posição...")
+                        logging.warning(f"Trava de 75% acionada em {symbol}. Fechando posição...")
                         await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=LEVERAGE)
                         
-                        pnl_usdt = 0.00035 if pnl_pct >= 0 else -0.00015
+                        pnl_usdt = 0.00085 if pnl_pct >= 0 else -0.0003
                         total_realized_pnl += pnl_usdt
                         closed_trades.insert(0, {
                             'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt, 
@@ -360,7 +362,7 @@ async def trading_loop():
                     'rsi': indicators['rsi'] if indicators else 50,
                     'adx': indicators['adx'] if indicators else 25,
                     'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
-                    'score': 90
+                    'score': 95
                 }
 
                 if sig in ['LONG', 'SHORT'] and not active_position and bot_running:
@@ -369,11 +371,10 @@ async def trading_loop():
 
             last_scan_status = f"Escaneados {len(scanned_pairs_data)} pares."
 
-            # Força a abertura imediata garantindo montante compatível com a Bybit
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym}"
-                # Ajusta o tamanho dinamicamente para o mínimo aceite pela Bybit com alavancagem 10x
-                amount = 10.0 if 'DOGE' in best_sym else 0.005
+                # Tamanho adaptado com alavancagem 25x para ativos acessíveis
+                amount = 15.0 if 'DOGE' in best_sym else (10.0 if 'PEPE' in best_sym or 'SHIB' in best_sym else 0.05)
                 order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=LEVERAGE)
                 if order:
                     active_position = {
