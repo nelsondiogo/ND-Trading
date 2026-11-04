@@ -22,7 +22,7 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-last_scan_status = "A aguardar início..."
+last_scan_status = "A iniciar varredura..."
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
 
@@ -31,22 +31,21 @@ async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance
     current_conf = config.load_config()
     
-    # Leitura real do saldo da Bybit
     if exchange_mgr.exchange:
         try:
             balance_data = await exchange_mgr.exchange.fetch_balance()
-            free_bal = balance_data['USDT']['free'] if 'USDT' in balance_data else 0.0
-            if initial_account_balance == 0.0 and free_bal > 0:
-                initial_account_balance = free_bal
-            current_account_balance = free_bal
-        except Exception:
-            pass
+            if 'USDT' in balance_data:
+                free_bal = float(balance_data['USDT'].get('free', 0.0) or 0.0)
+                if initial_account_balance == 0.0 and free_bal > 0:
+                    initial_account_balance = free_bal
+                current_account_balance = free_bal
+        except Exception as e:
+            logging.error(f"Erro ao ler saldo da Bybit: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
     status_color = "#4ade80" if bot_running else "#f87171"
 
-    # Posição ativa HTML
-    active_card_html = "<div style='color:#94a3b8; text-align:center; padding:20px;'>Nenhuma posição ativa no momento.</div>"
+    active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
     if active_position:
         side_color = "#f87171" if active_position['side'] == 'SHORT' else "#4ade80"
         active_card_html = f"""
@@ -55,18 +54,13 @@ async def dashboard_page(request: Request):
             <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']}</span>
         </div>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; font-size:13px; margin-bottom:12px;">
-            <div><span style="color:#94a3b8; font-size:11px;">PNL N.REALIZ.</span><br><b style="color:{side_color};">{active_position.get('pnl_unrealized', 0.00000):+.5f}</b></div>
-            <div><span style="color:#94a3b8; font-size:11px;">PRECO</span><br><b>+{active_position.get('current_price', 0.00582):.5f}</b></div>
+            <div><span style="color:#94a3b8; font-size:11px;">PNL N.REALIZ.</span><br><b style="color:{side_color};">{active_position.get('pnl_unrealized', 0.0):+.5f}</b></div>
+            <div><span style="color:#94a3b8; font-size:11px;">PRECO</span><br><b>+{active_position.get('current_price', 0.0):.5f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">ENTRADA</span><br><b style="color:#facc15;">+{active_position['entry_price']:.5f}</b></div>
             <div><span style="color:#94a3b8; font-size:11px;">PEAK / LOCK</span><br><b>{max_profit_reached*100:.2f}% / -</b></div>
         </div>
-        <div class="mini-chart">
-            <div class="dash-line"></div>
-            <div class="trend-line"></div>
-        </div>
         """
 
-    # Histórico de Trades HTML
     trades_html = ""
     wins = 0
     if not closed_trades:
@@ -82,12 +76,11 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.5f}</span>
                 </div>
-                <small style="color:#94a3b8;">DRAWDOWN | peak={t.get('peak', 0.33)}% current={t.get('curr', 0.12)}%</small>
+                <small style="color:#94a3b8;">DRAWDOWN | peak={t.get('peak', 0)}%</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
 
-    # Pares de Mercado HTML
     mercado_html = ""
     for sym, data in scanned_pairs_data.items():
         tag_color = "#f87171" if data['signal'] == 'SHORT' else "#4ade80"
@@ -95,10 +88,10 @@ async def dashboard_page(request: Request):
         <div style="background:#161f31; padding:14px; border-radius:8px; margin-bottom:10px; border:1px solid #2a374a;">
             <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
                 <span style="background:{tag_color}22; color:{tag_color}; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-                <b style="color:{tag_color};">{data.get('score', 86)}%</b>
+                <b style="color:{tag_color};">{data.get('score', 80)}%</b>
             </div>
             <div style="font-size:15px; font-weight:bold; margin-bottom:6px;">{sym}</div>
-            <div style="font-size:12px; color:#94a3b8;">ADX:{data['adx']:.1f} RSI:{data['rsi']:.1f} MFI:{data['mfi']:.1f} H1:BAIXA</div>
+            <div style="font-size:12px; color:#94a3b8;">Preço: {data['price']} | ADX:{data['adx']:.1f} RSI:{data['rsi']:.1f}</div>
         </div>
         """
 
@@ -108,30 +101,25 @@ async def dashboard_page(request: Request):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="refresh" content="12">
+        <meta http-equiv="refresh" content="10">
         <title>nd-bot v8</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 90px; }}
             
-            /* Topo Inicial / Atual / Nome */
-            .top-header {{ display: flex; justify-content: space-between; align-items: center; background: #0b0f19; padding: 12px 15px; border-bottom: 1px solid #1e293b; }}
-            .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px 14px; border-radius: 8px; text-align: center; width: 44%; }}
+            /* Nome do Bot em Linha Separada no Topo (Fina e Isolada) */
+            .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px 0; border-bottom: 1px solid #1e293b; font-size: 12px; font-weight: 500; color: #4ade80; letter-spacing: 1px; }}
+            
+            .top-header {{ display: flex; justify-content: space-between; align-items: center; background: #0b0f19; padding: 10px 15px; border-bottom: 1px solid #1e293b; }}
+            .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px 12px; border-radius: 8px; text-align: center; width: 46%; }}
             .top-card span {{ font-size: 10px; color: #94a3b8; font-weight: bold; display: block; }}
-            .top-card b {{ font-size: 14px; }}
-            .bot-brand {{ font-size: 13px; font-weight: bold; color: #4ade80; }}
+            .top-card b {{ font-size: 13px; }}
 
             .content {{ padding: 15px; max-width: 600px; margin: auto; }}
             .tab-content {{ display: none; }}
             .tab-content.active {{ display: block; }}
             
             .card {{ background: #161f31; border: 1px solid #2a374a; padding: 15px; border-radius: 10px; margin-bottom: 12px; }}
-            
-            /* Mini Gráfico da Posição */
-            .mini-chart {{ background: #0b0f19; height: 70px; border-radius: 6px; position: relative; overflow: hidden; border: 1px solid #2a374a; }}
-            .dash-line {{ position: absolute; top: 60%; left: 0; width: 100%; border-top: 1px dashed #facc15; }}
-            .trend-line {{ position: absolute; bottom: 15px; left: 0; width: 100%; height: 35px; background: linear-gradient(180deg, rgba(74,222,128,0.2) 0%, rgba(74,222,128,0) 100%); clip-path: polygon(0% 60%, 20% 70%, 40% 40%, 60% 20%, 80% 50%, 100% 30%, 100% 100%, 0% 100%); }}
 
-            /* Abas Inferiores Flutuantes */
             .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
             .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; }}
             .nav-item.active {{ color: #4ade80; font-weight: bold; }}
@@ -143,16 +131,18 @@ async def dashboard_page(request: Request):
     </head>
     <body>
 
-        <!-- Topo com Inicial, Atual e Logo nd-bot v8 -->
+        <!-- Linha Fina Separada com o Nome do Bot -->
+        <div class="brand-bar">nd-bot v8</div>
+
+        <!-- Topo com Inicial e Atual -->
         <div class="top-header">
             <div class="top-card">
                 <span>INICIAL</span>
-                <b style="color:#4ade80;">+{initial_account_balance:.5f}</b>
+                <b style="color:#4ade80;">+{initial_account_balance:.4f}</b>
             </div>
-            <div class="bot-brand">nd-bot v8</div>
             <div class="top-card">
                 <span>ATUAL</span>
-                <b style="color:#4ade80;">+{current_account_balance:.5f}</b>
+                <b style="color:#4ade80;">+{current_account_balance:.4f}</b>
             </div>
         </div>
 
@@ -167,11 +157,11 @@ async def dashboard_page(request: Request):
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
                     <div class="card" style="margin-bottom:0;">
                         <span style="color:#94a3b8; font-size:11px;">STATUS</span>
-                        <div style="font-size:16px; font-weight:bold; color:{status_color}; margin-top:4px;">{status_str}</div>
+                        <div style="font-size:15px; font-weight:bold; color:{status_color}; margin-top:4px;">{status_str}</div>
                     </div>
                     <div class="card" style="margin-bottom:0;">
                         <span style="color:#94a3b8; font-size:11px;">PNL REALIZADO</span>
-                        <div style="font-size:16px; font-weight:bold; color:#4ade80; margin-top:4px;">++{total_realized_pnl:.5f}</div>
+                        <div style="font-size:15px; font-weight:bold; color:#4ade80; margin-top:4px;">++{total_realized_pnl:.5f}</div>
                     </div>
                 </div>
 
@@ -188,9 +178,7 @@ async def dashboard_page(request: Request):
 
                 <div class="card">
                     <span style="color:#94a3b8; font-size:11px; display:block; margin-bottom:8px;">EVOLUCAO PNL (USDT)</span>
-                    <div style="background:#0b0f19; height:120px; border-radius:6px; border:1px solid #2a374a; position:relative;">
-                        <div style="position:absolute; bottom:20px; left:10px; width:90%; height:70%; background:linear-gradient(180deg, rgba(74,222,128,0.15) 0%, rgba(74,222,128,0) 100%); clip-path: polygon(0% 80%, 20% 90%, 40% 50%, 60% 20%, 80% 60%, 100% 30%, 100% 100%, 0% 100%);"></div>
-                    </div>
+                    <div style="background:#0b0f19; height:110px; border-radius:6px; border:1px solid #2a374a;"></div>
                 </div>
 
                 <form action="/toggle_bot" method="post">
@@ -201,15 +189,15 @@ async def dashboard_page(request: Request):
             <!-- ABA 2: MERCADO -->
             <div id="tab-mercado" class="tab-content">
                 <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">PARES ({len(scanned_pairs_data)}) | SCAN ATIVO</div>
-                {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A iniciar varredura de mercado...</p>"}
+                {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado em tempo real...</p>"}
             </div>
 
             <!-- ABA 3: GRAFICO -->
             <div id="tab-grafico" class="tab-content">
                 <div class="card">
-                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:10px;">BTCUSDT Perpetual Contract</div>
-                    <div style="background:#0b0f19; height:250px; border-radius:8px; display:flex; align-items:center; justify-content:center; border:1px solid #2a374a; color:#94a3b8; font-size:13px;">
-                        [Gráfico de Velas / TradingView Integrado]
+                    <div style="font-size:12px; color:#38bdf8; font-weight:bold; margin-bottom:10px;">DOGEUSDT Perpetual Contract</div>
+                    <div style="background:#0b0f19; height:240px; border-radius:8px; display:flex; align-items:center; justify-content:center; border:1px solid #2a374a; color:#94a3b8; font-size:13px;">
+                        [Gráfico de Velas / TradingView]
                     </div>
                 </div>
             </div>
@@ -245,7 +233,7 @@ async def dashboard_page(request: Request):
 
                         <div style="margin-top: 15px; display: flex; align-items: center; gap: 10px;">
                             <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
-                            <label style="margin:0; font-size:13px;">Ativar Testnet (Modo de Testes Bybit)</label>
+                            <label style="margin:0; font-size:13px;">Ativar Testnet (Modo de Testes)</label>
                         </div>
                         
                         <button type="submit">Guardar Definições</button>
@@ -255,7 +243,7 @@ async def dashboard_page(request: Request):
 
         </div>
 
-        <!-- Abas Inferiores Flutuantes (5 abas estilo nd-bot v8) -->
+        <!-- Abas Inferiores Flutuantes -->
         <div class="bottom-nav">
             <button class="nav-item" id="nav-dashboard" onclick="switchTab('dashboard')">
                 <svg viewBox="0 0 24 24"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
@@ -340,36 +328,6 @@ async def trading_loop():
                 await asyncio.sleep(5)
                 continue
 
-            # 1. Gestão de Posições Ativas
-            if active_position:
-                symbol = active_position['symbol']
-                entry_price = active_position['entry_price']
-                side = active_position['side']
-
-                t_start = time.time()
-                _, _, current_price, _ = await exchange_mgr.fetch_market_data(symbol)
-                scan_latency_ms = (time.time() - t_start) * 1000
-
-                if current_price:
-                    pnl_pct = (current_price - entry_price) / entry_price if side == 'LONG' else (entry_price - current_price) / entry_price
-                    active_position['current_price'] = current_price
-                    active_position['pnl_unrealized'] = pnl_pct * 0.05
-
-                    if pnl_pct > max_profit_reached:
-                        max_profit_reached = pnl_pct
-
-                    if trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached):
-                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'])
-                        pnl_usdt = 0.00050 if pnl_pct >= 0 else -0.00030
-                        total_realized_pnl += pnl_usdt
-                        closed_trades.insert(0, {
-                            'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt, 
-                            'peak': round(max_profit_reached*100, 2), 'curr': round(pnl_pct*100, 2)
-                        })
-                        active_position = None
-                        max_profit_reached = 0.0
-
-            # 2. Varredura de Mercado
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
@@ -380,7 +338,7 @@ async def trading_loop():
             best_sym = None
 
             for symbol, ohlcv, current_price, _ in results:
-                if not ohlcv:
+                if not ohlcv or not current_price:
                     continue
                 indicators = trading_engine.calculate_indicators(ohlcv)
                 sig = trading_engine.evaluate_signal(indicators)
@@ -389,28 +347,31 @@ async def trading_loop():
                     'price': current_price,
                     'rsi': indicators['rsi'] if indicators else 50,
                     'adx': indicators['adx'] if indicators else 30,
-                    'mfi': indicators['mfi'] if indicators else 45,
                     'signal': sig if sig in ['LONG', 'SHORT'] else 'SHORT',
-                    'score': 86 if sig != 'NEUTRAL' else 72
+                    'score': 85 if sig != 'NEUTRAL' else 65
                 }
 
                 if sig in ['LONG', 'SHORT'] and not active_position and bot_running:
                     best_sig = sig
                     best_sym = symbol
 
+            last_scan_status = f"Escaneados {len(scanned_pairs_data)} pares com sucesso."
+
             if best_sig and best_sym:
                 last_signal_text = f"{best_sig} {best_sym}"
-                order = await exchange_mgr.execute_market_order(best_sym, best_sig, 0.01)
+                # Quantidade adaptada para ativos como DOGE (ex: 10 a 50 unidades)
+                amount = 50.0 if 'DOGE' in best_sym else (10.0 if 'XRP' in best_sym else 0.01)
+                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount)
                 if order:
                     active_position = {
                         'symbol': best_sym, 'side': best_sig, 
                         'entry_price': scanned_pairs_data[best_sym]['price'], 
-                        'amount': 0.01
+                        'amount': amount
                     }
                     max_profit_reached = 0.0
 
         except Exception as e:
-            logging.error(f"Erro no ciclo: {e}")
+            logging.error(f"Erro no ciclo de trading: {e}")
 
         await asyncio.sleep(config.SCAN_INTERVAL)
 
