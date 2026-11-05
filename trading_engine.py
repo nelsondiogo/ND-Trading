@@ -61,7 +61,6 @@ class TradingEngine:
         Filtro Rigoroso Anti-Neutro:
         - LONG: Apenas se Preço > EMA50 E MACD > 0 E RSI < 65.
         - SHORT: Apenas se Preço < EMA50 E MACD < 0 E RSI > 35.
-        - Retorna None (Neutro) em qualquer outro cenário.
         """
         if not indicators:
             return None
@@ -71,11 +70,8 @@ class TradingEngine:
         macd = indicators["macd"]
         rsi = indicators["rsi"]
         
-        # Tendência de Alta Forte
         if close > ema50 and macd > 0 and rsi < 65:
             return "LONG"
-        
-        # Tendência de Baixa Forte
         elif close < ema50 and macd < 0 and rsi > 35:
             return "SHORT"
         
@@ -83,16 +79,19 @@ class TradingEngine:
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Stop Rigoroso e Automático:
-        - Stop de Proteção imediato em -0.10%.
-        - Trailing Stop sensível: Fecha se houver recuo de 10% a partir do pico após haver lucro.
+        Trailing Stop Baseado em Lucro:
+        - NUNCA fecha com prejuízo (permite ao preço recuperar).
+        - Ativa o trailing stop apenas se houver lucro positivo (>= +0.15%).
+        - Fecha se o lucro recuar 15% a partir do pico máximo atingido.
         """
-        if pnl_pct <= -0.0010:
-            return True, "Stop Rigoroso de Proteção (-0.10%)"
+        if pnl_pct <= 0:
+            return False, None
 
+        # Só ativa o trailing se o lucro atingir pelo menos 0.15%
         if max_profit_reached >= 0.0015:
-            recoil_threshold = max_profit_reached * 0.90
+            # Recuo de 15% a partir do lucro máximo atingido (ex: pico de 1.0% recua para 0.85%)
+            recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
-                return True, "Trailing Stop (Recuo Sensível)"
+                return True, "Trailing Stop (Recuo de 15% do Lucro Máximo)"
 
         return False, None
