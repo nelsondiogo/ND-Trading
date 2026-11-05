@@ -53,16 +53,15 @@ class BybitExchangeManager:
 
     async def execute_market_order(self, symbol: str, side: str, amount: float, leverage: int):
         if not self.exchange:
-            return None
-        try:
-            await self.set_leverage(symbol, leverage)
-            order_side = 'buy' if side.upper() == 'LONG' else 'sell'
-            order = await self.exchange.create_order(symbol, 'market', order_side, amount)
-            logging.info(f"Ordem executada em {symbol}: {order}")
-            return order
-        except Exception as e:
-            logging.error(f"Erro ao executar ordem em {symbol}: {e}")
-            return None
+            raise Exception("Exchange não inicializada")
+        
+        await self.set_leverage(symbol, leverage)
+        order_side = 'buy' if side.upper() == 'LONG' else 'sell'
+        
+        # Propaga o erro real da Bybit para o main.py exibir no painel
+        order = await self.exchange.create_order(symbol, 'market', order_side, amount)
+        logging.info(f"Ordem executada em {symbol}: {order}")
+        return order
 
     async def close(self):
         if self.exchange:
