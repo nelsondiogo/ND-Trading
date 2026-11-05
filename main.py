@@ -143,7 +143,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Proteção & PnL Duplo)</div>
+    <div class="brand-bar">nd-bot v8 (Gestão de Margem Adaptativa)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -297,7 +297,10 @@ async def dashboard_page(request: Request):
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
                             <div>Preço Atual: <b style="color:${{sideColor}};">${{pos.current_price.toFixed(5)}}</b></div>
-                            <div>PnL: ${{formatColoredPct(pnlPct)}} (${{formatColoredValue(pnlUsdt, 4)}} USDT)</div>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8; margin-bottom:8px;">
+                            <div style="background:#0b0f19; padding:6px; border-radius:4px;">PNL (%)<br>${{formatColoredPct(pnlPct)}}</div>
+                            <div style="background:#0b0f19; padding:6px; border-radius:4px;">PNL (USDT)<br>${{formatColoredValue(pnlUsdt, 4)}}</div>
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
                             <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">${{pos.entry_price.toFixed(5)}}</b></div>
@@ -314,11 +317,13 @@ async def dashboard_page(request: Request):
                 for (const [sym, info] of Object.entries(data.scanned_pairs)) {{
                     const tagColor = info.signal === 'SHORT' ? '#f87171' : '#4ade80';
                     const cleanName = cleanCoinName(sym);
+                    const signalBadge = info.signal ? `<span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>` : `<span style="background:#33415522; color:#94a3b8; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">NEUTRO</span>`;
+                    
                     mercadoHtml += `
                         <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                             <div style="margin-bottom:6px;">
                                 <div style="font-size:20px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}}</b></div>
-                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
+                                ${{signalBadge}}
                             </div>
                             <div style="font-size:12px; color:#94a3b8;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
                         </div>
@@ -482,7 +487,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (STOP E TRAILING STOP AUTOMÁTICO NA BYBIT)
+            # GESTÃO DA POSIÇÃO ATIVA (STOP E TRAILING STOP AUTOMÁTICO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -533,10 +538,24 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS (TENDÊNCIA RIGOROSA)
+            # ABERTURA DE NOVAS ORDENS COM LOTE ADAPTATIVO AO SALDO REAL ($0.30)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
-                amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
+                
+                # Cálculo de lote seguro para evitar o erro 110007 (ab not enough for new order)
+                # Utiliza o saldo atual e a alavancagem para calcular a quantidade exata suportada
+                safe_balance = current_account_balance if current_account_balance > 0 else 0.3
+                allocated_margin = safe_balance * 0.95  # Usa 95% do saldo livre
+                notional_value = allocated_margin * leverage
+                raw_amount = notional_value / curr_price
+                
+                # Ajuste de lote mínimo por moeda para respeitar as regras da Bybit
+                if 'DOGE' in best_sym:
+                    amount = max(10.0, round(raw_amount, 0))
+                elif 'XRP' in best_sym:
+                    amount = max(1.0, round(raw_amount, 1))
+                else:  # ADA
+                    amount = max(1.0, round(raw_amount, 1))
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
