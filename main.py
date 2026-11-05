@@ -32,13 +32,13 @@ closed_trades = []
 scanned_pairs_data = {}
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-last_api_error = "Sistema estabilizado e pronto!"
+last_api_error = "Sistema HFT otimizado (DOGE, XRP, ADA)!"
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
     global current_account_balance, initial_account_balance, last_api_error
-    current_conf = config.load_config()
-    current_leverage = current_conf.get("LEVERAGE", 10)
+    current_conf = config.load_config() if hasattr(config, 'load_config') else {'LEVERAGE': 17}
+    current_leverage = int(current_conf.get("LEVERAGE", 17))
     
     if exchange_mgr and exchange_mgr.exchange:
         try:
@@ -62,7 +62,7 @@ async def dashboard_page(request: Request):
                             if coin.get('coin') == 'USDT':
                                 live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
 
-                if initial_account_balance == 0.0:
+                if initial_account_balance == 0.0 or initial_account_balance > 1000:
                     initial_account_balance = live_bal
 
                 floating_pnl_usdt = 0.0
@@ -71,11 +71,11 @@ async def dashboard_page(request: Request):
                     entry_p = active_position['entry_price']
                     amt = active_position['amount']
                     if active_position['side'] == 'LONG':
-                        floating_pnl_usdt = (curr_p - entry_p) * amt
+                        floating_pnl_usdt = (curr_p - entry_p) * amt * (current_leverage / 10)
                     else:
-                        floating_pnl_usdt = (entry_p - curr_p) * amt
+                        floating_pnl_usdt = (entry_p - curr_p) * amt * (current_leverage / 10)
                 
-                current_account_balance = live_bal + total_realized_pnl + floating_pnl_usdt
+                current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
         except Exception as e:
             logging.error(f"Erro ao ler saldo: {e}")
 
@@ -155,7 +155,7 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f} USDT</span>
                 </div>
-                <small style="color:#94a3b8;">Fechado via Trailing Stop (25%)</small>
+                <small style="color:#94a3b8;">Fechado via Trailing Stop (15% recuo)</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -167,6 +167,8 @@ async def dashboard_page(request: Request):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>nd-bot v8</title>
+        <!-- Auto-refresh automático a cada 3 segundos para atualizar saldo, PNL e posições sem F5 manual -->
+        <meta http-equiv="refresh" content="3">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 80px; }}
             .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
@@ -184,7 +186,7 @@ async def dashboard_page(request: Request):
         </style>
     </head>
     <body>
-        <div class="brand-bar">nd-bot v8</div>
+        <div class="brand-bar">nd-bot v8 (DOGE, XRP, ADA - Auto Atualização Ativa)</div>
         <div class="top-header">
             <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b style="color:#4ade80;">+{initial_account_balance:.6f}</b></div>
             <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b style="color:#4ade80;">+{current_account_balance:.6f}</b></div>
@@ -210,7 +212,7 @@ async def dashboard_page(request: Request):
             </div>
             
             <div id="tab-mercado" class="tab-content">
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (10 PARES HFT)</div>
+                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (DOGE, XRP, ADA)</div>
                 {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p>"}
             </div>
 
@@ -297,23 +299,46 @@ async def trading_loop():
                 await asyncio.sleep(3)
                 continue
 
-            current_conf = config.load_config()
-            leverage = current_conf.get("LEVERAGE", 10)
+            current_conf = config.load_config() if hasattr(config, 'load_config') else {'LEVERAGE': 17}
+            leverage = int(current_conf.get("LEVERAGE", 17))
 
-            if active_position:
-                try:
-                    positions = await exchange_mgr.exchange.fetch_positions([active_position['symbol']])
-                    real_pos_found = False
-                    for p in positions:
-                        if float(p.get('contracts', 0.0) or p.get('size', 0.0)) > 0:
-                            real_pos_found = True
-                            break
-                    if not real_pos_found:
+            # Sincronização rigorosa em cada ciclo com a Bybit (deteta posições abertas ou fechadas instantaneamente)
+            try:
+                positions = await exchange_mgr.exchange.fetch_positions()
+                real_pos = None
+                for p in positions:
+                    if float(p.get('contracts', 0.0) or p.get('size', 0.0)) > 0:
+                        real_pos = p
+                        break
+                
+                if real_pos:
+                    sym = real_pos.get('symbol')
+                    side_raw = real_pos.get('side', '').upper()
+                    entry_p = float(real_pos.get('entryPrice', 0.0))
+                    contracts = float(real_pos.get('contracts', 0.0) or real_pos.get('size', 0.0))
+                    
+                    if not active_position or active_position['symbol'] != sym:
+                        active_position = {
+                            'symbol': sym,
+                            'side': 'LONG' if 'LONG' in side_raw or side_raw == 'BUY' else 'SHORT',
+                            'entry_price': entry_p,
+                            'current_price': entry_p,
+                            'highest_price': entry_p,
+                            'lowest_price': entry_p,
+                            'price_history': [entry_p],
+                            'amount': contracts,
+                            'pnl_unrealized': 0.0
+                        }
+                        max_profit_reached = 0.0
+                else:
+                    if active_position and not bot_running:
+                        pass
+                    elif active_position and bot_running:
+                        # Se fechou na Bybit
                         active_position = None
                         max_profit_reached = 0.0
-                        last_api_error = "Posição encerrada na Bybit."
-                except Exception:
-                    pass
+            except Exception as e:
+                logging.error(f"Erro ao sincronizar posições: {e}")
 
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
@@ -349,6 +374,13 @@ async def trading_loop():
                 side = active_position['side']
                 curr_price = scanned_pairs_data.get(symbol, {}).get('price')
 
+                if not curr_price:
+                    try:
+                        ticker = await exchange_mgr.exchange.fetch_ticker(symbol)
+                        curr_price = ticker['last']
+                    except Exception:
+                        curr_price = entry_price
+
                 if curr_price:
                     if curr_price > active_position['highest_price']:
                         active_position['highest_price'] = curr_price
@@ -371,21 +403,19 @@ async def trading_loop():
                     if should_close and bot_running:
                         try:
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
-                            pnl_usdt = pnl_pct * active_position['amount'] * entry_price
+                            pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
                             closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt})
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Trava de recuo acionada! Posição fechada em {symbol}"
+                            last_api_error = f"Fechado com sucesso em {symbol} (Trailing Stop 15%)!"
                         except Exception as e:
                             last_api_error = f"Erro ao fechar: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
-                
-                # Tamanho de lote seguro para evitar o erro 110007 (saldo insuficiente)
-                amount = 1.0 if 'DOGE' in best_sym else 0.1
+                amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
@@ -401,7 +431,7 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA com sucesso em {best_sym} ({best_sig})!"
+                        last_api_error = f"Ordem ABERTA em {best_sym} ({best_sig})!"
                 except Exception as e:
                     last_api_error = f"ERRO BYBIT (Margem/Lote): {str(e)}"
                     logging.error(last_api_error)
