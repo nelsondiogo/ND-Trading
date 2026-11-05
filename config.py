@@ -1,15 +1,17 @@
 import os
 
 PAIRS = [
-    'DOGE/USDT:USDT',
+    'BTC/USDT:USDT',
+    'ETH/USDT:USDT',
+    'SOL/USDT:USDT',
     'XRP/USDT:USDT',
+    'DOGE/USDT:USDT',
     'ADA/USDT:USDT',
-    'PEPE/USDT:USDT',
-    'SHIB/USDT:USDT',
+    'LINK/USDT:USDT',
     'TRX/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2  # Intervalo de 2 segundos para HFT
+SCAN_INTERVAL = 2  # Intervalo de 2 segundos para Alta Frequência
 
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
