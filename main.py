@@ -42,10 +42,9 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA, PEPE, SHIB, TRX)!"
+last_api_error = "ND-SCALPING Ativo (6 Pares & Alvo 0.5%)!"
 
 def get_order_amount(symbol):
-    """Retorna o tamanho mínimo e adequado do lote de acordo com o preço da moeda."""
     sym_upper = symbol.upper()
     if 'PEPE' in sym_upper:
         return 1000.0
@@ -143,10 +142,10 @@ async def dashboard_page(request: Request):
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>nd-bot v8</title>
+    <title>ND-SCALPING</title>
     <style>
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 90px; }}
-        .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
+        .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; font-weight: bold; }}
         .top-header {{ display: flex; justify-content: space-between; padding: 10px 15px; background: #0b0f19; border-bottom: 1px solid #1e293b; }}
         .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px; border-radius: 8px; text-align: center; width: 46%; }}
         .content {{ padding: 15px; max-width: 600px; margin: auto; }}
@@ -161,7 +160,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (6 Pares & Proteção Absoluta de Saldo)</div>
+    <div class="brand-bar">ND-SCALPING v8.5 (Alvo 0.5% & Alta Frequência)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -189,7 +188,7 @@ async def dashboard_page(request: Request):
         </div>
         
         <div id="tab-mercado" class="tab-content">
-            <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (6 ATIVOS)</div>
+            <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO SCALPING (6 ATIVOS)</div>
             <div id="mercado-container"><p style="color:#94a3b8; text-align:center;">A varrer mercado...</p></div>
         </div>
 
@@ -364,7 +363,7 @@ async def dashboard_page(request: Request):
                                     <div style="font-size:18px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}} (${{t.side}})</b></div>
                                     <div>${{formatColoredValue(t.pnl_usdt)}} USDT</div>
                                 </div>
-                                <small style="color:#94a3b8;">Fechado via ${{t.reason || 'Trailing Stop'}}</small>
+                                <small style="color:#94a3b8;">Fechado via ${{t.reason || 'Take Profit'}}</small>
                             </div>
                         `;
                     }}
@@ -419,9 +418,9 @@ async def toggle_bot():
             
             active_position = None
             max_profit_reached = 0.0
-            last_api_error = "Robô parado manualmente. Posição fechada com sucesso!"
+            last_api_error = "ND-SCALPING parado manualmente."
         except Exception as e:
-            last_api_error = f"Erro ao fechar na paragem manual: {str(e)}"
+            last_api_error = f"Erro na paragem manual: {str(e)}"
             logging.error(last_api_error)
 
     return """<html><meta http-equiv="refresh" content="0;url=/"><body></body></html>"""
@@ -438,7 +437,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições guardadas e alavancagem atualizada!</h2>
+        <h2 style="color:#4ade80;">Definições guardadas com sucesso!</h2>
     </body>
     </html>
     """
@@ -457,7 +456,7 @@ async def trading_loop():
 
             await fetch_live_balance()
 
-            # 1. VARREDURA COMPLETA DOS 6 ATIVOS
+            # 1. VARREDURA DOS 6 ATIVOS
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
 
@@ -517,7 +516,7 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # 3. GESTÃO DA POSIÇÃO ATIVA (SOMENTE FECHA COM LUCRO POSITIVO)
+            # 3. GESTÃO DA POSIÇÃO ATIVA (SCALPING DE ALTA FREQUÊNCIA)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -580,12 +579,12 @@ async def trading_loop():
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado em {clean_sym} com LUCRO ({close_reason})!"
+                            last_api_error = f"Scalping fechado em {clean_sym} com LUCRO ({close_reason})!"
                         except Exception as e:
-                            last_api_error = f"Erro fecho automático: {str(e)}"
+                            last_api_error = f"Erro fecho scalping: {str(e)}"
                             logging.error(last_api_error)
 
-            # 4. ABERTURA DE NOVAS ORDENS (Varre os 6 pares e abre a melhor oportunidade se livre)
+            # 4. ABERTURA RÁPIDA DE NOVAS ORDENS
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = get_order_amount(best_sym)
@@ -604,10 +603,10 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA em {clean_sym} ({best_sig})!"
+                        last_api_error = f"ND-SCALPING abriu em {clean_sym} ({best_sig})!"
                 except Exception as e:
                     clean_sym = clean_name_log(best_sym)
-                    last_api_error = f"ERRO BYBIT (Margem/Lote): {str(e)}"
+                    last_api_error = f"ERRO BYBIT (Scalping): {str(e)}"
                     logging.error(last_api_error)
 
         except Exception as e:
