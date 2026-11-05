@@ -5,16 +5,13 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula dados de velas e indicadores de precisão milimétrica"""
-        if not ohlcv or len(ohlcv) < 30:
+        """Calcula EMAs (20 e 50) e RSI para alinhamento milimétrico com a tendência real"""
+        if not ohlcv or len(ohlcv) < 55:
             return None
         
         closes = [candle[4] for candle in ohlcv]
-        opens = [candle[1] for candle in ohlcv]
-        highs = [candle[2] for candle in ohlcv]
-        lows = [candle[3] for candle in ohlcv]
         
-        # RSI (14 períodos)
+        # 1. RSI (14 períodos)
         gains = []
         losses = []
         for i in range(1, len(closes)):
@@ -29,56 +26,57 @@ class TradingEngine:
         avg_gain = sum(gains[-14:]) / 14 if len(gains) >= 14 else sum(gains) / len(gains)
         avg_loss = sum(losses[-14:]) / 14 if len(losses) >= 14 else sum(losses) / len(losses)
         
-        if avg_loss == 0:
-            rsi = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi = 100 - (100 / (1 + rs))
+        rsi = 100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss)))
 
-        c1 = {'open': opens[-2], 'high': highs[-2], 'low': lows[-2], 'close': closes[-2]}
-        c2 = {'open': opens[-1], 'high': highs[-1], 'low': lows[-1], 'close': closes[-1]}
+        # 2. EMAs para Tendência Firme (EMA 20 e EMA 50)
+        def calculate_ema(data, period):
+            multiplier = 2 / (period + 1)
+            ema_val = sum(data[:period]) / period
+            for price in data[period:]:
+                ema_val = (price - ema_val) * multiplier + ema_val
+            return ema_val
+
+        ema20 = calculate_ema(closes, 20)
+        ema50 = calculate_ema(closes, 50)
 
         return {
             "rsi": rsi,
+            "ema20": ema20,
+            "ema50": ema50,
             "close": closes[-1],
-            "c1": c1,
-            "c2": c2
+            "prev_close": closes[-2]
         }
 
     def evaluate_signal(self, indicators):
         """
-        Leitura Milimétrica e Crítica de Entrada:
-        - LONG: Exige que a vela anterior tenha fechado em alta ou suporte e a atual rompa o topo anterior com RSI > 50.
-        - SHORT: Exige que a vela anterior tenha rejeitado o topo e a atual rompa o fundo anterior com RSI < 50.
+        Entrada Milimétrica:
+        Só entra a favor da tendência macro definida pelo cruzamento de EMAs.
         """
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        c1 = indicators["c1"]
-        c2 = indicators["c2"]
+        ema20 = indicators["ema20"]
+        ema50 = indicators["ema50"]
+        close = indicators["close"]
+        prev_close = indicators["prev_close"]
 
-        body_c1 = c1["close"] - c1["open"]
-        body_c2 = c2["close"] - c2["open"]
-
-        # LONG Milimétrico: Vela anterior positiva ou a corrigir para cima, e vela atual a arrancar com força compradora real
-        is_long_valid = (body_c1 >= 0) and (body_c2 > 0) and (c2["close"] > c1["high"])
-        if is_long_valid and rsi >= 50 and rsi <= 68:
+        # LONG: Tendência de alta (EMA20 > EMA50), preço a subir e RSI saudável (51 a 68)
+        if ema20 > ema50 and close > prev_close and 51 <= rsi <= 68:
             return "LONG"
 
-        # SHORT Milimétrico: Vela anterior negativa ou a rejeitar topo, e vela atual a romper o fundo com força vendedora real
-        is_short_valid = (body_c1 <= 0) and (body_c2 < 0) and (c2["close"] < c1["low"])
-        if is_short_valid and rsi <= 50 and rsi >= 32:
+        # SHORT: Tendência de baixa (EMA20 < EMA50), preço a cair e RSI saudável (32 a 49)
+        if ema20 < ema50 and close < prev_close and 32 <= rsi <= 49:
             return "SHORT"
         
         return None
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída Milimétricas:
-        1. TAKE PROFIT FIRME: Atingiu ou ultrapassou 0.75% (0.0075) alavancado, fecha de imediato!
-        2. MUDANÇA DE DIREÇÃO / NEUTRALIDADE: Fecha logo se o mercado virar contra a posição.
-        3. RECUO DE LUCRO: Protege o ganho acumulado se o preço recuar do pico.
+        Saída Estável:
+        1. Take Profit em 0.75% ou mais.
+        2. Proteção por recuo quando o trade está no lucro.
+        3. Posição no prejuízo NUNCA é fechada prematuramente por alteração de sinal.
         """
         leveraged_pnl = pnl_pct * leverage
         leveraged_max_profit = max_profit_reached * leverage
@@ -87,24 +85,19 @@ class TradingEngine:
         if leveraged_pnl >= 0.0075:
             return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
 
-        # Se estiver no prejuízo, deixamos o mercado corrigir, mas se o sinal inverter por completo, fechamos para proteger
+        # Se estiver negativo, NÃO fecha por inversão de sinal (deixa o preço recuperar)
         if pnl_pct <= 0:
-            if active_side == 'LONG' and current_signal == 'SHORT':
-                return True, "Proteção Cirúrgica (Inversão para SHORT no prejuízo)"
-            if active_side == 'SHORT' and current_signal == 'LONG':
-                return True, "Proteção Cirúrgica (Inversão para LONG no prejuízo)"
             return False, None
 
-        # 2. Mudança de Direção ou Neutralidade com Lucro
-        if active_side == 'LONG' and current_signal in [None, 'SHORT']:
-            return True, f"Proteção por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
-        
-        if active_side == 'SHORT' and current_signal in [None, 'LONG']:
-            return True, f"Proteção por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
+        # 2. Fecho com lucro caso o sinal inverta totalmente
+        if active_side == 'LONG' and current_signal == 'SHORT':
+            return True, "Proteção de Lucro (Tendência mudou para SHORT)"
+        if active_side == 'SHORT' and current_signal == 'LONG':
+            return True, "Proteção de Lucro (Tendência mudou para LONG)"
 
-        # 3. Recuo Firme do Pico de Lucro
+        # 3. Proteção por recuo do topo do lucro
         if leveraged_max_profit > 0.002:
-            if pnl_pct < (max_profit_reached * 0.96):
-                return True, f"Proteção Firme por Recuo (Pico: {leveraged_max_profit*100:.2f}%)"
+            if pnl_pct < (max_profit_reached * 0.95):
+                return True, f"Proteção por Recuo (Pico: {leveraged_max_profit*100:.2f}%)"
 
         return False, None
