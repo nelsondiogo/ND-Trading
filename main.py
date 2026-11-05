@@ -16,11 +16,20 @@ app = FastAPI()
 exchange_mgr = None
 trading_engine = None
 
+def init_exchange_manager():
+    global exchange_mgr
+    try:
+        if config.BYBIT_API_KEY and config.BYBIT_API_SECRET:
+            exchange_mgr = BybitExchangeManager(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, config.IS_TESTNET)
+            logging.info("Exchange manager inicializado com sucesso.")
+    except Exception as e:
+        logging.error(f"Erro ao inicializar exchange manager: {e}")
+
+init_exchange_manager()
 try:
-    exchange_mgr = BybitExchangeManager(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, config.IS_TESTNET)
     trading_engine = TradingEngine(config)
 except Exception as e:
-    logging.error(f"Erro ao inicializar módulos: {e}")
+    logging.error(f"Erro ao inicializar trading engine: {e}")
 
 bot_running = False
 active_position = None
@@ -66,7 +75,7 @@ async def dashboard_page(request: Request):
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>nd-bot v8</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 80px; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 90px; }}
         .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
         .top-header {{ display: flex; justify-content: space-between; padding: 10px 15px; background: #0b0f19; border-bottom: 1px solid #1e293b; }}
         .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px; border-radius: 8px; text-align: center; width: 46%; }}
@@ -74,9 +83,9 @@ async def dashboard_page(request: Request):
         .tab-content {{ display: none; }}
         .tab-content.active {{ display: block; }}
         .card {{ background: #161f31; border: 1px solid #2a374a; padding: 15px; border-radius: 10px; margin-bottom: 12px; }}
-        .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
-        .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; }}
-        .nav-item.active {{ color: #4ade80; font-weight: bold; }}
+        .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 12px 0 16px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
+        .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 12px; font-weight: bold; cursor: pointer; display: flex; flex-direction: column; align-items: center; }}
+        .nav-item.active {{ color: #4ade80; font-weight: 800; }}
         input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
         button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }}
     </style>
@@ -268,8 +277,7 @@ async def toggle_bot():
 @app.post("/save", response_class=HTMLResponse)
 async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), leverage: int = Form(17), is_testnet: bool = Form(False)):
     config.save_config(api_key, api_secret, is_testnet, leverage)
-    if exchange_mgr:
-        await exchange_mgr.update_credentials(api_key, api_secret, is_testnet)
+    init_exchange_manager()
     return """
     <html>
     <meta http-equiv="refresh" content="1;url=/">
@@ -284,6 +292,7 @@ async def trading_loop():
     while True:
         try:
             if not exchange_mgr or not exchange_mgr.exchange:
+                init_exchange_manager()
                 await asyncio.sleep(3)
                 continue
 
