@@ -79,23 +79,23 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
         """
-        Proteção Estrita de Saldo:
-        - NUNCA encerra ordens com PnL <= 0.
-        - Apenas se pnl_pct > 0:
-          1. Encerra se ocorrer reversão direta de sinal (ex: LONG para SHORT).
-          2. Encerra via Trailing Stop se recuar 15% a partir do lucro máximo atingido.
+        Regra Absoluta de Proteção e Captura de Lucro:
+        - NUNCA fecha se pnl_pct <= 0 (proibido fechar no negativo).
+        - Se estiver em LUCRO (pnl_pct > 0):
+          1. Fecha se o sinal passar a NEUTRO ou inverter (garante o lucro antes de o mercado virar).
+          2. Fecha via Trailing Stop se recuar 15% a partir do pico máximo de lucro.
         """
         if pnl_pct <= 0:
             return False, None
 
-        # Reversão Direta com Lucro
-        if active_side == 'LONG' and current_signal == 'SHORT':
-            return True, "Reversão para SHORT (Com Lucro)"
+        # Se está em LUCRO e o sinal fica NEUTRO ou inverte, fecha imediatamente para garantir o lucro!
+        if active_side == 'LONG' and current_signal in [None, 'SHORT']:
+            return True, f"Saída com Lucro (Sinal mudou para {current_signal or 'NEUTRO'})"
         
-        if active_side == 'SHORT' and current_signal == 'LONG':
-            return True, "Reversão para LONG (Com Lucro)"
+        if active_side == 'SHORT' and current_signal in [None, 'LONG']:
+            return True, f"Saída com Lucro (Sinal mudou para {current_signal or 'NEUTRO'})"
 
-        # Trailing Stop por Recuo de Lucro (15%)
+        # Trailing Stop por Recuo de Lucro (15% do Pico Máximo)
         if max_profit_reached > 0.0001:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
