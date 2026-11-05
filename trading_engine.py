@@ -61,6 +61,7 @@ class TradingEngine:
         Filtro Rigoroso Anti-Neutro:
         - LONG: Apenas se Preço > EMA50 E MACD > 0 E RSI < 65.
         - SHORT: Apenas se Preço < EMA50 E MACD < 0 E RSI > 35.
+        - Retorna None (Neutro) se não cumprir estritamente.
         """
         if not indicators:
             return None
@@ -77,20 +78,23 @@ class TradingEngine:
         
         return None
 
-    def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
+    def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
         """
-        Trailing Stop Sensível Baseado em Lucro:
-        - Nunca fecha em prejuízo (pnl_pct <= 0).
-        - Assim que atinge qualquer lucro positivo (> 0.0001), ativa o rastreio do pico.
-        - Se o lucro recuar 15% a partir do pico máximo atingido, dispara o fecho.
+        Avaliação Rigorosa de Saída:
+        1. Inversão ou Neutralização do Sinal: Se o sinal técnico do mercado deixa de apoiar a posição ativa.
+        2. Trailing Stop de Lucro: Recuo de 15% a partir do lucro máximo atingido quando em positivo.
         """
-        if pnl_pct <= 0:
-            return False, None
+        # 1. Verificação de Inversão/Neutralização de Tendência
+        if active_side == 'LONG' and current_signal != 'LONG':
+            return True, f"Inversão/Neutralização de Sinal (Mudou para {current_signal or 'NEUTRO'})"
+        
+        if active_side == 'SHORT' and current_signal != 'SHORT':
+            return True, f"Inversão/Neutralização de Sinal (Mudou para {current_signal or 'NEUTRO'})"
 
-        # Ativa o trailing logo que haja lucro detetado
-        if max_profit_reached > 0.0001:
+        # 2. Trailing Stop Baseado em Lucro (Recuo de 15% do Pico)
+        if pnl_pct > 0 and max_profit_reached > 0.0001:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
-                return True, "Trailing Stop (Recuo de 15% do Lucro Máximo)"
+                return True, "Trailing Stop (Recuo de 15% do Lucro)"
 
         return False, None
