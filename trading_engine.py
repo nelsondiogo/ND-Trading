@@ -5,7 +5,7 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores de alta precisão e estrutura de velas para eliminar ruído"""
+        """Calcula dados de velas de alta precisão para Scalping Cirúrgico"""
         if not ohlcv or len(ohlcv) < 30:
             return None
         
@@ -35,74 +35,75 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Estrutura das últimas 3 velas para filtrar ruído e confirmar momentum real
-        c1 = {'open': opens[-3], 'close': closes[-3]} # Vela antepenúltima
-        c2 = {'open': opens[-2], 'close': closes[-2]} # Vela anterior (Pullback/Correção)
-        c3 = {'open': opens[-1], 'close': closes[-1]} # Vela atual (Arranque)
+        # Estrutura das últimas velas para detetar exaustão e correção exata
+        current_candle = {'open': opens[-1], 'high': highs[-1], 'low': lows[-1], 'close': closes[-1]}
+        previous_candle = {'open': opens[-2], 'high': highs[-2], 'low': lows[-2], 'close': closes[-2]}
 
         return {
             "rsi": rsi,
             "close": closes[-1],
-            "c1": c1,
-            "c2": c2,
-            "c3": c3
+            "current": current_candle,
+            "previous": previous_candle
         }
 
     def evaluate_signal(self, indicators):
         """
-        Entrada Cirúrgica Anti-Ruído:
-        Exige alinhamento de corpo de velas consecutivo para evitar falsos sinais de alta volatilidade.
+        Entrada Cirúrgica Anti-Drawdown:
+        Só entra após a vela anterior ter corrigido/testado o patamar oposto.
         """
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        c1 = indicators["c1"]
-        c2 = indicators["c2"]
-        c3 = indicators["c3"]
+        curr = indicators["current"]
+        prev = indicators["previous"]
 
-        body1 = c1["close"] - c1["open"]
-        body2 = c2["close"] - c2["open"]
-        body3 = c3["close"] - c3["open"]
+        curr_body = curr["close"] - curr["open"]
+        prev_upper_shadow = prev["high"] - max(prev["open"], prev["close"])
+        prev_lower_shadow = min(prev["open"], prev["close"]) - prev["low"]
 
-        # LONG Cirúrgico: Vela 2 corrigiu levemente ou estabilizou, e Vela 3 rompeu com força compradora real
-        is_long_setup = (body2 <= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 > 0) and (body1 + body3 > 0)
-        if is_long_setup and 45 <= rsi <= 65:
+        # LONG Cirúrgico: Vela anterior testoubaixo (pavio inferior forte) e a atual arrancou verde
+        is_long_setup = (prev_lower_shadow > prev_upper_shadow) and (curr_body > 0)
+        if is_long_setup and 42 <= rsi <= 65:
             return "LONG"
 
-        # SHORT Cirúrgico: Vela 2 subiu levemente, e Vela 3 rompeu com força vendedora real
-        is_short_setup = (body2 >= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 < 0) and (body1 + body3 < 0)
-        if is_short_setup and 35 <= rsi <= 55:
+        # SHORT Cirúrgico: Vela anterior testou alto (pavio superior forte) e a atual arrancou vermelha
+        is_short_setup = (prev_upper_shadow > prev_lower_shadow) and (curr_body < 0)
+        if is_short_setup and 35 <= rsi <= 58:
             return "SHORT"
         
         return None
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída ND-SCALPING (Trava Rígida em 0.75% & Proteção Imediata contra Recuo):
-        1. Proibido fechar no negativo (pnl_pct <= 0 mantém aberto para recuperar).
-        2. TAKE PROFIT ABSOLUTO EM 0.75%: Se o PnL alavancado atingir >= 0.75% (0.0075), fecha de imediato!
-        3. MUDANÇA DE DIREÇÃO / NEUTRALIDADE: Fecha logo se o mercado virar.
-        4. RECUO DE LUCRO: Se o lucro recuar do topo, fecha de imediato para não devolver ganho.
+        Regras de Saída ND-SCALPING (Blindagem Total):
+        1. STOP LOSS DE EMERGÊNCIA: Se o PnL alavancado descer abaixo de -1.5% (-0.015), corta imediatamente para evitar desastres!
+        2. TAKE PROFIT ABSOLUTO EM 0.75%: Se atingir >= 0.75% (0.0075), fecha de imediato.
+        3. MUDANÇA DE DIREÇÃO / NEUTRALIDADE: Fecha logo se o sinal mudar.
+        4. RECUO DE LUCRO: Protege o lucro obtido mal o preço recue do topo.
         """
-        if pnl_pct <= 0:
-            return False, None
-
         leveraged_pnl = pnl_pct * leverage
         leveraged_max_profit = max_profit_reached * leverage
 
-        # 1. Take Profit Absoluto em 0.75% (Sem espera)
+        # 1. STOP LOSS DE EMERGÊNCIA (Proteção rigorosa contra drawdowns profundos)
+        if leveraged_pnl <= -0.015:
+            return True, f"Stop Loss de Emergência Acionado ({leveraged_pnl*100:.2f}%)"
+
+        if pnl_pct <= 0:
+            return False, None
+
+        # 2. Take Profit Absoluto em 0.75% (Sem espera)
         if leveraged_pnl >= 0.0075:
             return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
 
-        # 2. Mudança de Direção ou Neutralidade com Lucro
+        # 3. Mudança de Direção ou Neutralidade com Lucro
         if active_side == 'LONG' and current_signal in [None, 'SHORT']:
             return True, f"Proteção (Sinal mudou para {current_signal or 'NEUTRO'})"
         
         if active_side == 'SHORT' and current_signal in [None, 'LONG']:
             return True, f"Proteção (Sinal mudou para {current_signal or 'NEUTRO'})"
 
-        # 3. Recuo Imediato do Pico de Lucro (Trailing Stop de Proteção de 3%)
+        # 4. Recuo Imediato do Pico de Lucro (Trailing Stop de Proteção de 3%)
         if leveraged_max_profit > 0.002:
             if pnl_pct < (max_profit_reached * 0.97):
                 return True, f"Proteção por Recuo (Pico: {leveraged_max_profit*100:.2f}%)"
