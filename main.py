@@ -42,7 +42,24 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA)!"
+last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA, PEPE, SHIB, TRX)!"
+
+def get_order_amount(symbol):
+    """Retorna o tamanho mínimo e adequado do lote de acordo com o preço da moeda."""
+    sym_upper = symbol.upper()
+    if 'PEPE' in sym_upper:
+        return 1000.0
+    elif 'SHIB' in sym_upper:
+        return 100.0
+    elif 'DOGE' in sym_upper:
+        return 1.0
+    elif 'TRX' in sym_upper:
+        return 1.0
+    elif 'XRP' in sym_upper:
+        return 0.1
+    elif 'ADA' in sym_upper:
+        return 1.0
+    return 1.0
 
 async def fetch_live_balance():
     global initial_account_balance, current_account_balance
@@ -144,7 +161,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Syntax Corrigida & Live)</div>
+    <div class="brand-bar">nd-bot v8 (6 Pares & Proteção Absoluta de Saldo)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -172,7 +189,7 @@ async def dashboard_page(request: Request):
         </div>
         
         <div id="tab-mercado" class="tab-content">
-            <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO</div>
+            <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (6 ATIVOS)</div>
             <div id="mercado-container"><p style="color:#94a3b8; text-align:center;">A varrer mercado...</p></div>
         </div>
 
@@ -298,16 +315,16 @@ async def dashboard_page(request: Request):
                             <div><span style="background:${{sideColor}}22; color:${{sideColor}}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">${{pos.side}} (${{data.leverage}}x)</span></div>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
-                            <div>Preço Atual: <b style="color:${{sideColor}};">${{pos.current_price.toFixed(5)}}</b></div>
+                            <div>Preço Atual: <b style="color:${{sideColor}};">${{pos.current_price}}</b></div>
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8; margin-bottom:8px;">
                             <div style="background:#0b0f19; padding:6px; border-radius:4px;">PNL (%)<br>${{formatColoredPct(pnlPct)}}</div>
                             <div style="background:#0b0f19; padding:6px; border-radius:4px;">PNL (USDT)<br>${{formatColoredValue(pnlUsdt, 4)}}</div>
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
-                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">${{pos.entry_price.toFixed(5)}}</b></div>
-                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">${{pos.highest_price.toFixed(5)}}</b></div>
-                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">${{pos.lowest_price.toFixed(5)}}</b></div>
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">${{pos.entry_price}}</b></div>
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">${{pos.highest_price}}</b></div>
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">${{pos.lowest_price}}</b></div>
                         </div>
                     `;
                 }} else {{
@@ -440,7 +457,7 @@ async def trading_loop():
 
             await fetch_live_balance()
 
-            # 1. VARREDURA COMPLETA DO MERCADO PRIMEIRO
+            # 1. VARREDURA COMPLETA DOS 6 ATIVOS
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
 
@@ -471,7 +488,6 @@ async def trading_loop():
                 positions = await exchange_mgr.exchange.fetch_positions(config.PAIRS)
                 real_pos = None
                 for p in positions:
-                    # CORRIGIDO O ERRO DE SINTAXE DOS PARÊNTESES NA LINHA ABAIXO
                     if float(p.get('contracts', 0.0) or p.get('size', 0.0)) > 0:
                         real_pos = p
                         break
@@ -501,7 +517,7 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # 3. GESTÃO DA POSIÇÃO ATIVA (AVALIAÇÃO DE INVERSÃO OU TRAILING STOP)
+            # 3. GESTÃO DA POSIÇÃO ATIVA (SOMENTE FECHA COM LUCRO POSITIVO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -564,21 +580,15 @@ async def trading_loop():
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado em {clean_sym} ({close_reason})!"
+                            last_api_error = f"Fechado em {clean_sym} com LUCRO ({close_reason})!"
                         except Exception as e:
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # 4. ABERTURA DE NOVAS ORDENS
+            # 4. ABERTURA DE NOVAS ORDENS (Varre os 6 pares e abre a melhor oportunidade se livre)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
-                
-                if 'DOGE' in best_sym:
-                    amount = 1.0
-                elif 'XRP' in best_sym:
-                    amount = 0.1
-                else:
-                    amount = 1.0
+                amount = get_order_amount(best_sym)
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
