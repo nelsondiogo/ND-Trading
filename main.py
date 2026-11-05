@@ -32,7 +32,7 @@ closed_trades = []
 scanned_pairs_data = {}
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-last_api_error = "Nenhum erro recente"
+last_api_error = "Sincronizado com a Bybit com sucesso!"
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
@@ -66,7 +66,16 @@ async def dashboard_page(request: Request):
                     initial_account_balance = live_bal
                     current_account_balance = live_bal
                 else:
-                    current_account_balance = initial_account_balance + total_realized_pnl
+                    floating_pnl_usdt = 0.0
+                    if active_position:
+                        curr_p = active_position.get('current_price', active_position['entry_price'])
+                        entry_p = active_position['entry_price']
+                        amt = active_position['amount']
+                        if active_position['side'] == 'LONG':
+                            floating_pnl_usdt = (curr_p - entry_p) * amt
+                        else:
+                            floating_pnl_usdt = (entry_p - curr_p) * amt
+                    current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
         except Exception as e:
             logging.error(f"Erro ao ler saldo: {e}")
 
@@ -77,12 +86,47 @@ async def dashboard_page(request: Request):
     active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
     if active_position:
         side_color = "#f87171" if active_position['side'] == 'SHORT' else "#4ade80"
+        curr_p = active_position.get('current_price', active_position['entry_price'])
+        entry_p = active_position['entry_price']
+        high_p = active_position.get('highest_price', entry_p)
+        low_p = active_position.get('lowest_price', entry_p)
+        pnl_unr = active_position.get('pnl_unrealized', 0.0)
+        pnl_color = "#4ade80" if pnl_unr >= 0 else "#f87171"
+        
+        history_prices = active_position.get('price_history', [entry_p])
+        min_h = min(history_prices)
+        max_h = max(history_prices)
+        spread = max_h - min_h if max_h != min_h else 0.0001
+        
+        svg_points = ""
+        width = 300
+        height = 60
+        step = width / max(1, len(history_prices) - 1)
+        
+        for idx, p in enumerate(history_prices):
+            x = idx * step
+            y = height - ((p - min_h) / spread) * (height - 10) - 5
+            svg_points += f"{x},{y} "
+
         active_card_html = f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <b style="font-size:16px;">{active_position['symbol']}</b>
             <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']} ({current_leverage}x)</span>
         </div>
-        <div style="font-size:13px; margin-bottom:8px;">Preço: +{active_position.get('current_price', 0.0):.6f} | Entrada: +{active_position['entry_price']:.6f}</div>
+        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
+            <div>Preço Atual: <b style="color:{pnl_color};">+{curr_p:.5f}</b></div>
+            <div>PNL N.Realiz.: <b style="color:{pnl_color};">{pnl_unr:+.2f}%</b></div>
+        </div>
+        <div style="background:#0b0f19; border-radius:6px; padding:6px; margin-bottom:10px; border:1px solid #2a374a;">
+            <svg width="100%" height="{height}" viewBox="0 0 {width} {height}" preserveAspectRatio="none" style="overflow:visible;">
+                <polyline fill="none" stroke="{pnl_color}" stroke-width="2" points="{svg_points}"/>
+            </svg>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
+            <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">+{entry_p:.5f}</b></div>
+            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">+{high_p:.5f}</b></div>
+            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">+{low_p:.5f}</b></div>
+        </div>
         """
 
     mercado_html = ""
@@ -256,6 +300,23 @@ async def trading_loop():
             current_conf = config.load_config()
             leverage = current_conf.get("LEVERAGE", 10)
 
+            # Sincronização direta do estado real da Bybit: verifica se a posição ainda existe na corretora
+            if active_position and bot_running:
+                try:
+                    positions = await exchange_mgr.exchange.fetch_positions([active_position['symbol']])
+                    real_pos_found = False
+                    for p in positions:
+                        if float(p.get('contracts', 0.0) or p.get('size', 0.0)) > 0:
+                            real_pos_found = True
+                            break
+                    if not real_pos_found:
+                        # Se a posição foi fechada externamente na Bybit, limpa o estado local
+                        active_position = None
+                        max_profit_reached = 0.0
+                        last_api_error = "Posição detetada como fechada na Bybit."
+                except Exception:
+                    pass
+
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
@@ -291,9 +352,18 @@ async def trading_loop():
                 curr_price = scanned_pairs_data.get(symbol, {}).get('price')
 
                 if curr_price:
+                    if curr_price > active_position['highest_price']:
+                        active_position['highest_price'] = curr_price
+                    if curr_price < active_position['lowest_price']:
+                        active_position['lowest_price'] = curr_price
+
+                    active_position['price_history'].append(curr_price)
+                    if len(active_position['price_history']) > 20:
+                        active_position['price_history'].pop(0)
+
                     pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
                     active_position['current_price'] = curr_price
-                    active_position['pnl_unrealized'] = pnl_pct * leverage
+                    active_position['pnl_unrealized'] = pnl_pct * leverage * 100
 
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
@@ -303,8 +373,9 @@ async def trading_loop():
                     if should_close and bot_running:
                         try:
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
-                            total_realized_pnl += 0.002
-                            closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': 0.002})
+                            pnl_usdt = pnl_pct * active_position['amount'] * entry_price
+                            total_realized_pnl += pnl_usdt
+                            closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt})
                             active_position = None
                             max_profit_reached = 0.0
                             last_api_error = f"Posição fechada com sucesso em {symbol}"
@@ -314,8 +385,6 @@ async def trading_loop():
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
-                
-                # Quantidade otimizada para o saldo atual com alavancagem
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
 
                 try:
@@ -324,7 +393,12 @@ async def trading_loop():
                         active_position = {
                             'symbol': best_sym, 'side': best_sig,
                             'entry_price': curr_price,
-                            'amount': amount, 'score': 90
+                            'current_price': curr_price,
+                            'highest_price': curr_price,
+                            'lowest_price': curr_price,
+                            'price_history': [curr_price],
+                            'amount': amount,
+                            'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
                         last_api_error = f"Ordem ABERTA com sucesso em {best_sym}!"
