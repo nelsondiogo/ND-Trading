@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Proteção Anti-Erro & Stop Rigoroso)</div>
+    <div class="brand-bar">nd-bot v8 (Fecho Blindado & ReduceOnly)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -377,7 +377,6 @@ async def toggle_bot():
             leverage = int(config.load_config().get("LEVERAGE", 17))
             
             if exchange_mgr and exchange_mgr.exchange:
-                # Consulta a posição real na corretora para garantir fecho sem erro de margem
                 positions = await exchange_mgr.exchange.fetch_positions([symbol])
                 real_amt = amount
                 for p in positions:
@@ -387,12 +386,12 @@ async def toggle_bot():
                             real_amt = sz
                             break
                 
-                await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', real_amt, leverage=leverage)
+                await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', real_amt, leverage=leverage, params={'reduceOnly': True})
             
             pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
             pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
             total_realized_pnl += pnl_usdt
-            initial_account_balance += pnl_usdt  # Juros compostos aplicados
+            initial_account_balance += pnl_usdt
             
             closed_trades.insert(0, {
                 'symbol': symbol,
@@ -403,7 +402,7 @@ async def toggle_bot():
             
             active_position = None
             max_profit_reached = 0.0
-            last_api_error = "Robô parado manualmente. Posição fechada e registada no histórico!"
+            last_api_error = "Robô parado manualmente. Posição fechada com sucesso!"
         except Exception as e:
             last_api_error = f"Erro ao fechar na paragem manual: {str(e)}"
             logging.error(last_api_error)
@@ -496,12 +495,11 @@ async def trading_loop():
                     'signal': sig
                 }
 
-                # APENAS SELECIONA SINAIS EXPLÍCITOS (LONG OU SHORT), NUNCA NEUTRO
                 if sig in ['LONG', 'SHORT'] and not best_sym:
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (STOP RIGOROSO E FECHO BLINDADO)
+            # GESTÃO DA POSIÇÃO ATIVA (STOP RIGOROSO COM REDUCEONLY)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -535,7 +533,6 @@ async def trading_loop():
                             clean_sym = clean_name_log(symbol)
                             close_amount = active_position['amount']
                             
-                            # Verifica quantidade exata na corretora antes de fechar
                             try:
                                 positions = await exchange_mgr.exchange.fetch_positions([symbol])
                                 for p in positions:
@@ -547,11 +544,11 @@ async def trading_loop():
                             except Exception:
                                 pass
 
-                            await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', close_amount, leverage=leverage)
+                            await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', close_amount, leverage=leverage, params={'reduceOnly': True})
                             
                             pnl_usdt = pnl_pct * close_amount * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
-                            initial_account_balance += pnl_usdt  # Juros compostos automáticos
+                            initial_account_balance += pnl_usdt
                             
                             closed_trades.insert(0, {
                                 'symbol': symbol,
@@ -566,7 +563,7 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS (APENAS COM SINAL FORTE E LOTE MÍNIMO SEGURO)
+            # ABERTURA DE NOVAS ORDENS (APENAS SE O BOT ESTIVER LIGADO E O SINAL FOR FORTE)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
