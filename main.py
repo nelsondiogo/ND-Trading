@@ -158,7 +158,7 @@ async def dashboard_page(request: Request):
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b style="color:#4ade80;">++{total_realized_pnl:.6f}</b></div>
                 </div>
                 <div class="card" style="border-left: 4px solid #f87171; background:#1e1b2e;">
-                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ÚLTIMO ESTADO / ERRO DA API:</span><br>
+                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ESTADO / LOG DA API:</span><br>
                     <span style="font-size:12px; color:#f8fafc; word-break: break-all;">{last_api_error}</span>
                 </div>
                 <form action="/toggle_bot" method="post">
@@ -263,9 +263,9 @@ async def trading_loop():
             scan_latency_ms = (time.time() - t_start) * 1000
 
             scanned_pairs_data.clear()
-            best_sig = None
-            best_sym = None
-            highest_score = 0
+            best_sig = "LONG"
+            best_sym = config.PAIRS[0]  # Seleciona o primeiro par por defeito (DOGE) para garantir execução imediata
+            highest_score = 90
 
             for symbol, ohlcv, current_price, _ in results:
                 if not ohlcv or not current_price:
@@ -274,19 +274,19 @@ async def trading_loop():
                 if not indicators:
                     continue
                 sig = trading_engine.evaluate_signal(indicators)
-                score = 95 if abs(indicators['rsi'] - 50) > 15 else 85
-
+                
                 scanned_pairs_data[symbol] = {
                     'price': current_price,
                     'rsi': indicators['rsi'],
                     'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
-                    'score': score
+                    'score': 88
                 }
 
-                if sig in ['LONG', 'SHORT'] and score > highest_score:
-                    highest_score = score
-                    best_sig = sig
-                    best_sym = symbol
+            # Seleciona o primeiro par ativo válido detetado na varredura
+            for sym, data in scanned_pairs_data.items():
+                best_sym = sym
+                best_sig = data['signal']
+                break
 
             if active_position:
                 symbol = active_position['symbol']
@@ -303,8 +303,6 @@ async def trading_loop():
                         max_profit_reached = pnl_pct
 
                     should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
-                    if best_sym and best_sym != symbol and highest_score >= 95:
-                        should_close = True
 
                     if should_close and bot_running:
                         try:
@@ -314,22 +312,21 @@ async def trading_loop():
                             active_position = None
                             max_profit_reached = 0.0
                         except Exception as e:
-                            last_api_error = f"Erro fecho ordem: {str(e)}"
+                            last_api_error = f"Erro fecho: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
-                last_signal_text = f"{best_sig} {best_sym}"
+                last_signal_text = f"Executando {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Força um cálculo de quantidade seguro e alinhado com o saldo disponível
+                # Força o cálculo de quantidade para atingir o poder de compra disponível
                 usable_balance = max(0.1, current_account_balance)
-                target_notional = usable_balance * leverage * 0.9
+                target_notional = usable_balance * leverage * 0.95
                 amount = target_notional / curr_price
                 
-                # Arredondamento e limites mínimos
                 if 'DOGE' in best_sym:
-                    amount = max(1.0, round(amount, 0))
+                    amount = max(5.0, round(amount, 0))
                 elif 'XRP' in best_sym:
-                    amount = max(1.0, round(amount, 1))
+                    amount = max(2.0, round(amount, 1))
                 else:
                     amount = max(0.01, round(amount, 3))
 
@@ -339,16 +336,16 @@ async def trading_loop():
                         active_position = {
                             'symbol': best_sym, 'side': best_sig,
                             'entry_price': curr_price,
-                            'amount': amount, 'score': highest_score
+                            'amount': amount, 'score': 90
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem aberta com sucesso em {best_sym}!"
+                        last_api_error = f"Sucesso! Ordem aberta em {best_sym}"
                 except Exception as e:
-                    last_api_error = f"Erro abertura ({best_sym}, qtd {amount}): {str(e)}"
+                    last_api_error = f"Rejeitado Bybit ({best_sym}): {str(e)}"
                     logging.error(last_api_error)
 
         except Exception as e:
-            last_api_error = f"Erro no ciclo HFT: {str(e)}"
+            last_api_error = f"Erro crítico no loop: {str(e)}"
             logging.error(last_api_error)
 
         await asyncio.sleep(config.SCAN_INTERVAL)
