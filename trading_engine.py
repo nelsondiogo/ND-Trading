@@ -24,7 +24,6 @@ class TradingEngine:
                 rs = avg_gain / avg_loss
                 rsi = 100.0 - (100.0 / (1.0 + rs))
 
-            # Médias móveis rápidas para confirmar a direção exata do fluxo
             sma_fast = np.mean(closes[-3:])
             sma_slow = np.mean(closes[-10:])
 
@@ -46,25 +45,22 @@ class TradingEngine:
         sma_fast = indicators.get('sma_fast', 0.0)
         sma_slow = indicators.get('sma_slow', 0.0)
 
-        # REGRA DE OURO RIGOROSA: Nunca entrar contra o mercado
-        # Apenas abre LONG se houver força compradora clara (RSI > 51 e preço acima da média rápida)
+        # Regra de Ouro: Nunca entrar contra a tendência
         if rsi > 51.0 and sma_fast >= sma_slow:
             return "LONG"
-        # Apenas abre SHORT se houver pressão vendedora clara (RSI < 49 e preço abaixo da média rápida)
         elif rsi < 49.0 and sma_fast <= sma_slow:
             return "SHORT"
         else:
             return "NEUTRAL"
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
-        # REGRA DE RECUO DO PICO DE LUCRO (Trailing Stop de 25% do lucro obtido)
-        if max_profit_reached > 0.0010:  # Assim que ultrapassar 0.10% de lucro
-            # Se o lucro atual cair abaixo de 75% do lucro máximo alcançado (perdeu 25% do topo)
-            if pnl_pct <= (max_profit_reached * 0.75):
+        # Regra de Ouro: Recuo rigoroso de apenas 15% do lucro máximo obtido
+        if max_profit_reached > 0.0008:
+            if pnl_pct <= (max_profit_reached * 0.85):  # Perdeu 15% do topo alcançado
                 return True
 
-        # Stop loss de proteção estrita para evitar reversões bruscas (-0.6%)
-        if pnl_pct <= -0.006:
+        # Stop loss de segurança estrito (-0.5%)
+        if pnl_pct <= -0.005:
             return True
 
         return False
