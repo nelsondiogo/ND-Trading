@@ -4,7 +4,7 @@ import os
 import time
 import uvicorn
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import config
 from exchange_management import BybitExchangeManager
 from trading_engine import TradingEngine
@@ -30,136 +30,36 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-scan_latency_ms = 0.0
-last_signal_text = "Nenhum sinal recente"
-last_api_error = "Sistema HFT otimizado (DOGE, XRP, ADA)!"
+last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA)!"
+
+@app.get("/api/state")
+async def get_bot_state():
+    """Endpoint leve para atualizar a UI via JavaScript sem nunca dar F5 na página"""
+    current_conf = config.load_config()
+    leverage = int(current_conf.get("LEVERAGE", 17))
+    multiplied = current_account_balance * leverage
+    wins = sum(1 for t in closed_trades if t['pnl_usdt'] >= 0)
+    win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
+
+    return {
+        "bot_running": bot_running,
+        "initial_balance": round(initial_account_balance, 6),
+        "current_balance": round(current_account_balance, 6),
+        "realized_pnl": round(total_realized_pnl, 6),
+        "multiplied_balance": round(multiplied, 6),
+        "leverage": leverage,
+        "last_api_error": last_api_error,
+        "active_position": active_position,
+        "scanned_pairs": scanned_pairs_data,
+        "closed_trades": closed_trades,
+        "win_rate": win_rate
+    }
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
-    global current_account_balance, initial_account_balance, last_api_error
-    current_conf = config.load_config() if hasattr(config, 'load_config') else {'LEVERAGE': 17}
+    current_conf = config.load_config()
     current_leverage = int(current_conf.get("LEVERAGE", 17))
     
-    if exchange_mgr and exchange_mgr.exchange:
-        try:
-            balance_data = {}
-            try:
-                balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
-            except Exception:
-                try:
-                    balance_data = await exchange_mgr.exchange.fetch_balance({'accountType': 'UNIFIED'})
-                except Exception:
-                    balance_data = await exchange_mgr.exchange.fetch_balance()
-
-            if balance_data and 'USDT' in balance_data:
-                usdt_info = balance_data.get('USDT', {})
-                live_bal = float(usdt_info.get('free', 0.0) or usdt_info.get('total', 0.0) or 0.0)
-                
-                if live_bal == 0.0 and 'info' in balance_data:
-                    result_list = balance_data['info'].get('result', {}).get('list', [])
-                    for acc in result_list:
-                        for coin in acc.get('coin', []):
-                            if coin.get('coin') == 'USDT':
-                                live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
-
-                if initial_account_balance == 0.0 or initial_account_balance > 1000:
-                    initial_account_balance = live_bal
-
-                floating_pnl_usdt = 0.0
-                if active_position:
-                    curr_p = active_position.get('current_price', active_position['entry_price'])
-                    entry_p = active_position['entry_price']
-                    amt = active_position['amount']
-                    if active_position['side'] == 'LONG':
-                        floating_pnl_usdt = (curr_p - entry_p) * amt * (current_leverage / 10)
-                    else:
-                        floating_pnl_usdt = (entry_p - curr_p) * amt * (current_leverage / 10)
-                
-                current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
-        except Exception as e:
-            logging.error(f"Erro ao ler saldo: {e}")
-
-    status_str = "OPERANDO" if bot_running else "PARADO"
-    status_color = "#4ade80" if bot_running else "#f87171"
-    multiplied_balance = current_account_balance * current_leverage
-
-    active_card_html = "<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>"
-    if active_position:
-        side_color = "#f87171" if active_position['side'] == 'SHORT' else "#4ade80"
-        curr_p = active_position.get('current_price', active_position['entry_price'])
-        entry_p = active_position['entry_price']
-        high_p = active_position.get('highest_price', entry_p)
-        low_p = active_position.get('lowest_price', entry_p)
-        pnl_unr = active_position.get('pnl_unrealized', 0.0)
-        pnl_color = "#4ade80" if pnl_unr >= 0 else "#f87171"
-        
-        history_prices = active_position.get('price_history', [entry_p])
-        min_h = min(history_prices)
-        max_h = max(history_prices)
-        spread = max_h - min_h if max_h != min_h else 0.0001
-        
-        svg_points = ""
-        width = 300
-        height = 60
-        step = width / max(1, len(history_prices) - 1)
-        
-        for idx, p in enumerate(history_prices):
-            x = idx * step
-            y = height - ((p - min_h) / spread) * (height - 10) - 5
-            svg_points += f"{x},{y} "
-
-        active_card_html = f"""
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-            <b style="font-size:16px;">{active_position['symbol']}</b>
-            <span style="background:{side_color}22; color:{side_color}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">{active_position['side']} ({current_leverage}x)</span>
-        </div>
-        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
-            <div>Preço Atual: <b style="color:{pnl_color};">+{curr_p:.5f}</b></div>
-            <div>PNL N.Realiz.: <b style="color:{pnl_color};">{pnl_unr:+.2f}%</b></div>
-        </div>
-        <div style="background:#0b0f19; border-radius:6px; padding:6px; margin-bottom:10px; border:1px solid #2a374a;">
-            <svg width="100%" height="{height}" viewBox="0 0 {width} {height}" preserveAspectRatio="none" style="overflow:visible;">
-                <polyline fill="none" stroke="{pnl_color}" stroke-width="2" points="{svg_points}"/>
-            </svg>
-        </div>
-        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
-            <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">+{entry_p:.5f}</b></div>
-            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">+{high_p:.5f}</b></div>
-            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">+{low_p:.5f}</b></div>
-        </div>
-        """
-
-    mercado_html = ""
-    for sym, data in scanned_pairs_data.items():
-        tag_color = "#f87171" if data['signal'] == 'SHORT' else "#4ade80"
-        mercado_html += f"""
-        <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
-            <span style="background:{tag_color}22; color:{tag_color}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">{data['signal']}</span>
-            <b style="font-size:14px; margin-left:8px;">{sym}</b>
-            <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Preço: {data['price']} | RSI: {data['rsi']:.1f}</div>
-        </div>
-        """
-
-    trades_html = ""
-    wins = 0
-    if not closed_trades:
-        trades_html = "<p style='color:#94a3b8; text-align:center;'>Nenhuma operação fechada ainda.</p>"
-    else:
-        for t in closed_trades:
-            if t['pnl_usdt'] >= 0:
-                wins += 1
-            color = "#4ade80" if t['pnl_usdt'] >= 0 else "#f87171"
-            trades_html += f"""
-            <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
-                <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
-                    <b>{t['symbol']} ({t['side']})</b>
-                    <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f} USDT</span>
-                </div>
-                <small style="color:#94a3b8;">Fechado via Trailing Stop (15% recuo)</small>
-            </div>
-            """
-    win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
-
     html_content = f"""
     <!DOCTYPE html>
     <html lang="pt">
@@ -167,8 +67,6 @@ async def dashboard_page(request: Request):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>nd-bot v8</title>
-        <!-- Auto-refresh automático a cada 3 segundos para atualizar saldo, PNL e posições sem F5 manual -->
-        <meta http-equiv="refresh" content="3">
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 80px; }}
             .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
@@ -186,44 +84,46 @@ async def dashboard_page(request: Request):
         </style>
     </head>
     <body>
-        <div class="brand-bar">nd-bot v8 (DOGE, XRP, ADA - Auto Atualização Ativa)</div>
+        <div class="brand-bar">nd-bot v8 (DOGE, XRP, ADA - Sincronização em Tempo Real)</div>
         <div class="top-header">
-            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b style="color:#4ade80;">+{initial_account_balance:.6f}</b></div>
-            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b style="color:#4ade80;">+{current_account_balance:.6f}</b></div>
+            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">+0.000000</b></div>
+            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">+0.000000</b></div>
         </div>
         <div class="content">
-            <div id="tab-dashboard" class="tab-content">
-                <div class="card">{active_card_html}</div>
+            <div id="tab-dashboard" class="tab-content active">
+                <div class="card" id="active-position-card">
+                    <div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>
+                </div>
                 <div class="card" style="border-left: 4px solid #38bdf8;">
-                    <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM MANUAL: <b>{current_leverage}x</b></span><br>
-                    <span style="font-size:13px;">Poder de Compra: <b style="color:#38bdf8;">+{multiplied_balance:.6f} USDT</b></span>
+                    <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM MANUAL: <b id="lbl-lev">{current_leverage}x</b></span><br>
+                    <span style="font-size:13px;">Poder de Compra: <b id="lbl-power" style="color:#38bdf8;">+0.000000 USDT</b></span>
                 </div>
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
-                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b style="color:{status_color};">{status_str}</b></div>
-                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b style="color:#4ade80;">++{total_realized_pnl:.6f}</b></div>
+                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b id="lbl-status" style="color:#f87171;">PARADO</b></div>
+                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b id="lbl-realized" style="color:#4ade80;">++0.000000</b></div>
                 </div>
                 <div class="card" style="border-left: 4px solid #4ade80; background:#16241f;">
                     <span style="font-size:11px; color:#4ade80; font-weight:bold;">ESTADO / LOG DA API:</span><br>
-                    <span style="font-size:12px; color:#f8fafc; word-break: break-all;">{last_api_error}</span>
+                    <span id="lbl-log" style="font-size:12px; color:#f8fafc; word-break: break-all;">A aguardar início...</span>
                 </div>
                 <form action="/toggle_bot" method="post">
-                    <button type="submit" style="background:{('#ef4444' if bot_running else '#22c55e')};">{('PARAR ROBÔ' if bot_running else 'INICIAR ROBÔ')}</button>
+                    <button type="submit" id="btn-toggle" style="background:#22c55e;">INICIAR ROBÔ</button>
                 </form>
             </div>
             
             <div id="tab-mercado" class="tab-content">
                 <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (DOGE, XRP, ADA)</div>
-                {mercado_html if mercado_html else "<p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p>"}
+                <div id="mercado-container"><p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p></div>
             </div>
 
             <div id="tab-historico" class="tab-content">
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
-                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b style="color:#4ade80; font-size:15px;">+{total_realized_pnl:.6f}</b></div>
-                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">WIN RATE</span><br><b style="color:#4ade80; font-size:15px;">{win_rate}%</b></div>
+                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b id="lbl-total-lucro" style="color:#4ade80; font-size:15px;">+0.000000</b></div>
+                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">WIN RATE</span><br><b id="lbl-winrate" style="color:#4ade80; font-size:15px;">0%</b></div>
                 </div>
                 <div class="card">
-                    <span style="font-size:12px; color:#94a3b8; font-weight:bold; display:block; margin-bottom:8px;">REGISTO DE TRADES ({len(closed_trades)})</span>
-                    {trades_html}
+                    <span style="font-size:12px; color:#94a3b8; font-weight:bold; display:block; margin-bottom:8px;">REGISTO DE TRADES</span>
+                    <div id="historico-container"><p style='color:#94a3b8; text-align:center;'>Nenhuma operação fechada ainda.</p></div>
                 </div>
             </div>
 
@@ -238,7 +138,7 @@ async def dashboard_page(request: Request):
                         <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Alavancagem Manual:</label>
                         <input type="number" name="leverage" value="{current_leverage}" min="1" max="100" required>
                         <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
+                            <input type="checkbox" name="is_testnet" value="true" {{'checked' if current_conf['IS_TESTNET'] else ''}}>
                             <label style="font-size:13px; margin:0;">Ativar Testnet</label>
                         </div>
                         <button type="submit">Guardar Definições</button>
@@ -253,6 +153,7 @@ async def dashboard_page(request: Request):
             <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">Histórico</button>
             <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">Ajustes</button>
         </div>
+
         <script>
             function switchTab(tabId) {{
                 document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
@@ -261,10 +162,103 @@ async def dashboard_page(request: Request):
                 document.getElementById('nav-' + tabId).classList.add('active');
                 localStorage.setItem('activeTab', tabId);
             }}
+
             window.onload = function() {{
                 const savedTab = localStorage.getItem('activeTab') || 'dashboard';
                 switchTab(savedTab);
+                setInterval(updateDashboardData, 2000); // Atualiza os dados a cada 2 segundos sem recarregar a página
             }};
+
+            async function updateDashboardData() {{
+                try {{
+                    const response = await fetch('/api/state');
+                    const data = await response.json();
+
+                    document.getElementById('lbl-initial').innerText = '+' + data.initial_balance.toFixed(6);
+                    document.getElementById('lbl-current').innerText = '+' + data.current_balance.toFixed(6);
+                    document.getElementById('lbl-realized').innerText = '++' + data.realized_pnl.toFixed(6);
+                    document.getElementById('lbl-power').innerText = '+' + data.multiplied_balance.toFixed(6) + ' USDT';
+                    document.getElementById('lbl-total-lucro').innerText = '+' + data.realized_pnl.toFixed(6);
+                    document.getElementById('lbl-winrate').innerText = data.win_rate + '%';
+                    document.getElementById('lbl-log').innerText = data.last_api_error;
+
+                    const statusEl = document.getElementById('lbl-status');
+                    const btnToggle = document.getElementById('btn-toggle');
+                    if (data.bot_running) {{
+                        statusEl.innerText = 'OPERANDO';
+                        statusEl.style.color = '#4ade80';
+                        btnToggle.innerText = 'PARAR ROBÔ';
+                        btnToggle.style.background = '#ef4444';
+                    }} else {{
+                        statusEl.innerText = 'PARADO';
+                        statusEl.style.color = '#f87171';
+                        btnToggle.innerText = 'INICIAR ROBÔ';
+                        btnToggle.style.background = '#22c55e';
+                    }}
+
+                    // Posição Ativa
+                    const posCard = document.getElementById('active-position-card');
+                    if (data.active_position) {{
+                        const pos = data.active_position;
+                        const sideColor = pos.side === 'SHORT' ? '#f87171' : '#4ade80';
+                        posCard.innerHTML = `
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <b style="font-size:16px;">${{pos.symbol}}</b>
+                                <span style="background:${{sideColor}}22; color:${{sideColor}}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">${{pos.side}} (${{data.leverage}}x)</span>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
+                                <div>Preço Atual: <b style="color:${{sideColor}};">+${{pos.current_price.toFixed(5)}}</b></div>
+                                <div>PNL N.Realiz.: <b style="color:${{sideColor}};">${{pos.pnl_unrealized >= 0 ? '+' : ''}}${{pos.pnl_unrealized.toFixed(2)}}%</b></div>
+                            </div>
+                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
+                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">+${{pos.entry_price.toFixed(5)}}</b></div>
+                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">+${{pos.highest_price.toFixed(5)}}</b></div>
+                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">+${{pos.lowest_price.toFixed(5)}}</b></div>
+                            </div>
+                        `;
+                    }} else {{
+                        posCard.innerHTML = `<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>`;
+                    }}
+
+                    // Mercado
+                    const mercadoContainer = document.getElementById('mercado-container');
+                    let mercadoHtml = '';
+                    for (const [sym, info] of Object.entries(data.scanned_pairs)) {{
+                        const tagColor = info.signal === 'SHORT' ? '#f87171' : '#4ade80';
+                        mercadoHtml += `
+                            <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
+                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
+                                <b style="font-size:14px; margin-left:8px;">${{sym}}</b>
+                                <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
+                            </div>
+                        `;
+                    }}
+                    mercadoContainer.innerHTML = mercadoHtml || '<p style="color:#94a3b8; text-align:center;">A carregar mercado...</p>';
+
+                    // Histórico
+                    const histContainer = document.getElementById('historico-container');
+                    if (data.closed_trades.length === 0) {{
+                        histContainer.innerHTML = '<p style="color:#94a3b8; text-align:center;">Nenhuma operação fechada ainda.</p>';
+                    }} else {{
+                        let histHtml = '';
+                        for (const t of data.closed_trades) {{
+                            const col = t.pnl_usdt >= 0 ? '#4ade80' : '#f87171';
+                            histHtml += `
+                                <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
+                                    <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+                                        <b>${{t.symbol}} (${{t.side}})</b>
+                                        <span style="color:${{col}}; font-weight:bold;">${{t.pnl_usdt >= 0 ? '+' : ''}}${{t.pnl_usdt.toFixed(6)}} USDT</span>
+                                    </div>
+                                    <small style="color:#94a3b8;">Fechado via Trailing Stop (15%)</small>
+                                </div>
+                            `;
+                        }}
+                        histContainer.innerHTML = histHtml;
+                    }}
+                } catch (err) {{
+                    console.error("Erro no polling da UI:", err);
+                }}
+            }}
         </script>
     </body>
     </html>
@@ -278,7 +272,7 @@ async def toggle_bot():
     return """<html><meta http-equiv="refresh" content="0;url=/"><body></body></html>"""
 
 @app.post("/save", response_class=HTMLResponse)
-async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), leverage: int = Form(10), is_testnet: bool = Form(False)):
+async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), leverage: int = Form(17), is_testnet: bool = Form(False)):
     config.save_config(api_key, api_secret, is_testnet, leverage)
     if exchange_mgr:
         await exchange_mgr.update_credentials(api_key, api_secret, is_testnet)
@@ -286,25 +280,46 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições guardadas!</h2>
+        <h2 style="color:#4ade80;">Definições guardadas com sucesso!</h2>
     </body>
     </html>
     """
 
 async def trading_loop():
-    global active_position, max_profit_reached, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl, last_api_error
+    global active_position, max_profit_reached, scanned_pairs_data, closed_trades, initial_account_balance, current_account_balance, total_realized_pnl, last_api_error
     while True:
         try:
             if not exchange_mgr or not exchange_mgr.exchange:
                 await asyncio.sleep(3)
                 continue
 
-            current_conf = config.load_config() if hasattr(config, 'load_config') else {'LEVERAGE': 17}
+            current_conf = config.load_config()
             leverage = int(current_conf.get("LEVERAGE", 17))
 
-            # Sincronização rigorosa em cada ciclo com a Bybit (deteta posições abertas ou fechadas instantaneamente)
+            # Sincronização de saldo real
             try:
-                positions = await exchange_mgr.exchange.fetch_positions()
+                balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
+                if 'USDT' in balance_data:
+                    live_bal = float(balance_data['USDT'].get('free', 0.0) or balance_data['USDT'].get('total', 0.0) or 0.0)
+                    if initial_account_balance == 0.0 or initial_account_balance > 1000:
+                        initial_account_balance = live_bal
+                    
+                    floating_pnl_usdt = 0.0
+                    if active_position:
+                        cp = active_position.get('current_price', active_position['entry_price'])
+                        ep = active_position['entry_price']
+                        amt = active_position['amount']
+                        if active_position['side'] == 'LONG':
+                            floating_pnl_usdt = (cp - ep) * amt * (leverage / 10)
+                        else:
+                            floating_pnl_usdt = (ep - cp) * amt * (leverage / 10)
+                    current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
+            except Exception:
+                pass
+
+            # Sincronização de posições reais na Bybit
+            try:
+                positions = await exchange_mgr.exchange.fetch_positions(config.PAIRS)
                 real_pos = None
                 for p in positions:
                     if float(p.get('contracts', 0.0) or p.get('size', 0.0)) > 0:
@@ -325,25 +340,21 @@ async def trading_loop():
                             'current_price': entry_p,
                             'highest_price': entry_p,
                             'lowest_price': entry_p,
-                            'price_history': [entry_p],
                             'amount': contracts,
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
                 else:
-                    if active_position and not bot_running:
-                        pass
-                    elif active_position and bot_running:
-                        # Se fechou na Bybit
+                    if active_position and bot_running:
                         active_position = None
                         max_profit_reached = 0.0
             except Exception as e:
-                logging.error(f"Erro ao sincronizar posições: {e}")
+                logging.error(f"Erro posições: {e}")
 
+            # Varredura dos 3 pares (DOGE, XRP, ADA)
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
-            scan_latency_ms = (time.time() - t_start) * 1000
 
             scanned_pairs_data.clear()
             best_sig = None
@@ -360,8 +371,7 @@ async def trading_loop():
                 scanned_pairs_data[symbol] = {
                     'price': current_price,
                     'rsi': indicators['rsi'],
-                    'signal': sig,
-                    'score': 90
+                    'signal': sig
                 }
 
                 if sig in ['LONG', 'SHORT'] and not best_sym:
@@ -382,14 +392,10 @@ async def trading_loop():
                         curr_price = entry_price
 
                 if curr_price:
-                    if curr_price > active_position['highest_price']:
+                    if curr_price > active_position.get('highest_price', entry_price):
                         active_position['highest_price'] = curr_price
-                    if curr_price < active_position['lowest_price']:
+                    if curr_price < active_position.get('lowest_price', entry_price):
                         active_position['lowest_price'] = curr_price
-
-                    active_position['price_history'].append(curr_price)
-                    if len(active_position['price_history']) > 20:
-                        active_position['price_history'].pop(0)
 
                     pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
                     active_position['current_price'] = curr_price
@@ -410,10 +416,9 @@ async def trading_loop():
                             max_profit_reached = 0.0
                             last_api_error = f"Fechado com sucesso em {symbol} (Trailing Stop 15%)!"
                         except Exception as e:
-                            last_api_error = f"Erro ao fechar: {str(e)}"
+                            last_api_error = f"Erro fechar: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
-                last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
 
@@ -426,7 +431,6 @@ async def trading_loop():
                             'current_price': curr_price,
                             'highest_price': curr_price,
                             'lowest_price': curr_price,
-                            'price_history': [curr_price],
                             'amount': amount,
                             'pnl_unrealized': 0.0
                         }
