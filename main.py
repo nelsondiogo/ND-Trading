@@ -315,7 +315,7 @@ async def dashboard_page(request: Request):
                         <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                             <div style="margin-bottom:6px;">
                                 <div style="font-size:20px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}}</b></div>
-                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal || 'AGUARDANDO'}}</span>
+                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
                             </div>
                             <div style="font-size:12px; color:#94a3b8;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
                         </div>
@@ -527,7 +527,7 @@ async def trading_loop():
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
-            # ABERTURA DE NOVAS ORDENS (LONG OU SHORT)
+            # ABERTURA DE NOVAS ORDENS (DISPARO IMEDIATO)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
