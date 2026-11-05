@@ -32,10 +32,11 @@ closed_trades = []
 scanned_pairs_data = {}
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
+last_api_error = "Nenhum erro recente"
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
-    global current_account_balance, initial_account_balance
+    global current_account_balance, initial_account_balance, last_api_error
     current_conf = config.load_config()
     current_leverage = current_conf.get("LEVERAGE", 10)
     
@@ -67,6 +68,7 @@ async def dashboard_page(request: Request):
                 else:
                     current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
+            last_api_error = str(e)
             logging.error(f"Erro ao ler saldo: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
@@ -155,6 +157,10 @@ async def dashboard_page(request: Request):
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b style="color:{status_color};">{status_str}</b></div>
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b style="color:#4ade80;">++{total_realized_pnl:.6f}</b></div>
                 </div>
+                <div class="card" style="border-left: 4px solid #f87171; background:#1e1b2e;">
+                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ÚLTIMO ESTADO / ERRO DA API:</span><br>
+                    <span style="font-size:12px; color:#f8fafc; word-break: break-all;">{last_api_error}</span>
+                </div>
                 <form action="/toggle_bot" method="post">
                     <button type="submit" style="background:{('#ef4444' if bot_running else '#22c55e')};">{('PARAR ROBÔ' if bot_running else 'INICIAR ROBÔ')}</button>
                 </form>
@@ -241,7 +247,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     """
 
 async def trading_loop():
-    global active_position, max_profit_reached, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl
+    global active_position, max_profit_reached, scanned_pairs_data, closed_trades, scan_latency_ms, last_signal_text, total_realized_pnl, last_api_error
     while True:
         try:
             if not exchange_mgr or not exchange_mgr.exchange:
@@ -301,38 +307,49 @@ async def trading_loop():
                         should_close = True
 
                     if should_close and bot_running:
-                        await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
-                        total_realized_pnl += 0.002
-                        closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': 0.002})
-                        active_position = None
-                        max_profit_reached = 0.0
+                        try:
+                            await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
+                            total_realized_pnl += 0.002
+                            closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': 0.002})
+                            active_position = None
+                            max_profit_reached = 0.0
+                        except Exception as e:
+                            last_api_error = f"Erro fecho ordem: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"{best_sig} {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Cálculo dinâmico da quantidade com base no saldo real e alavancagem
-                # Usa 80% do saldo total com alavancagem para abrir a posição com segurança
+                # Força um cálculo de quantidade seguro e alinhado com o saldo disponível
                 usable_balance = max(0.1, current_account_balance)
-                target_notional = usable_balance * leverage * 0.8
+                target_notional = usable_balance * leverage * 0.9
                 amount = target_notional / curr_price
                 
-                # Arredondamento seguro por moeda
-                amount = round(amount, 1 if 'DOGE' in best_sym or 'XRP' in best_sym else 3)
-                if amount <= 0:
-                    amount = 1.0
+                # Arredondamento e limites mínimos
+                if 'DOGE' in best_sym:
+                    amount = max(1.0, round(amount, 0))
+                elif 'XRP' in best_sym:
+                    amount = max(1.0, round(amount, 1))
+                else:
+                    amount = max(0.01, round(amount, 3))
 
-                order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
-                if order:
-                    active_position = {
-                        'symbol': best_sym, 'side': best_sig,
-                        'entry_price': curr_price,
-                        'amount': amount, 'score': highest_score
-                    }
-                    max_profit_reached = 0.0
+                try:
+                    order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
+                    if order:
+                        active_position = {
+                            'symbol': best_sym, 'side': best_sig,
+                            'entry_price': curr_price,
+                            'amount': amount, 'score': highest_score
+                        }
+                        max_profit_reached = 0.0
+                        last_api_error = f"Ordem aberta com sucesso em {best_sym}!"
+                except Exception as e:
+                    last_api_error = f"Erro abertura ({best_sym}, qtd {amount}): {str(e)}"
+                    logging.error(last_api_error)
 
         except Exception as e:
-            logging.error(f"Erro no ciclo HFT: {e}")
+            last_api_error = f"Erro no ciclo HFT: {str(e)}"
+            logging.error(last_api_error)
 
         await asyncio.sleep(config.SCAN_INTERVAL)
 
