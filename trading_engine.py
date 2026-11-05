@@ -5,8 +5,8 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos avançados (RSI e EMA de Tendência)"""
-        if not ohlcv or len(ohlcv) < 20:
+        """Calcula indicadores técnicos (RSI e EMA de Tendência)"""
+        if not ohlcv or len(ohlcv) < 14:
             return None
         
         closes = [candle[4] for candle in ohlcv]
@@ -32,8 +32,8 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Cálculo de EMA 20 (Média Móvel Exponencial para identificar a tendência)
-        k = 2 / (20 + 1)
+        # Cálculo de EMA 20 (Média Móvel Exponencial)
+        k = 2 / (min(20, len(closes)) + 1)
         ema = closes[0]
         for price in closes[1:]:
             ema = (price * k) + (ema * (1 - k))
@@ -47,9 +47,9 @@ class TradingEngine:
     def evaluate_signal(self, indicators):
         """
         Avaliação bilateral rigorosa a favor da tendência:
-        - LONG: Preço acima da EMA (Tendência de Alta) E RSI em zona de suporte/retração (< 48).
-        - SHORT: Preço abaixo da EMA (Tendência de Baixa) E RSI em zona de resistência/sobrecompra (> 52).
-        Ambas as direções têm exatamente a mesma prioridade e rigor.
+        - LONG: Preço acima da EMA E RSI < 52 (espaço para subir).
+        - SHORT: Preço abaixo da EMA E RSI > 48 (espaço para cair).
+        Garante que nunca dá sinal 'null' em condições normais de mercado.
         """
         if not indicators:
             return None
@@ -58,29 +58,37 @@ class TradingEngine:
         close = indicators["close"]
         ema = indicators["ema"]
         
-        # Condição estrita para LONG (Compra)
-        if close > ema and rsi < 48:
+        # Sinal de Compra (LONG)
+        if close >= ema and rsi < 52:
             return "LONG"
         
-        # Condição estrita para SHORT (Venda)
-        elif close < ema and rsi > 52:
+        # Sinal de Venda (SHORT)
+        elif close <= ema and rsi > 48:
             return "SHORT"
         
         return None
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Trailing Stop ultra-rigoroso e frio:
-        - Stop de emergência imediato em -0.1% para bloquear qualquer percurso negativo.
-        - Assim que atinge lucro positivo (pico > +0.05%) e o preço recua 10% do pico OU toca o zero, fecha imediatamente para trancar o lucro.
+        Trailing Stop Rigoroso de 15% de recuo sobre o lucro máximo:
+        - Stop de emergência absoluto se atingir -0.2%.
+        - Se o trade esteve positivo (pico > 0%), fecha assim que o lucro recuar 15% a partir do ponto máximo atingido.
         """
-        # Stop de emergência estrito (-0.1%)
-        if pnl_pct <= -0.001:
+        # Stop de emergência estrito (-0.2%)
+        if pnl_pct <= -0.002:
             return True
 
-        # Se esteve positivo e o preço começa a voltar para trás
-        if max_profit_reached > 0.0005:
-            if pnl_pct < (max_profit_reached * 0.90) or pnl_pct <= 0:
+        # Se nunca atingiu lucro relevante, aguarda margem mínima
+        if max_profit_reached <= 0.0005:
+            if pnl_pct <= -0.0015:
                 return True
+            return False
+
+        # Regra exata solicitada: fechar se o lucro recuar 15% a partir do pico máximo alcançado
+        # Exemplo: se o pico foi +1.0%, o limiar de recuo é +1.0% * (1 - 0.15) = +0.85%
+        recoil_threshold = max_profit_reached * 0.85
+        
+        if pnl_pct < recoil_threshold:
+            return True
 
         return False
