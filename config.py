@@ -1,11 +1,11 @@
 import os
 
-# Credenciais e Definições da Bybit (Pré-definidas por padrão)
+# Credenciais e Definições da Bybit (Pré-definidas por padrão para leitura imediata)
 BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "cIHTUlByBnrfkEy8S")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "tua_api_secret_aqui")
 IS_TESTNET = False
 
-# Apenas os 3 pares estritos abaixo de 1 USDT
+# Apenas os 3 pares estritos abaixo de 1 USDT solicitados
 PAIRS = [
     'DOGE/USDT:USDT',
     'XRP/USDT:USDT',
