@@ -143,7 +143,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Autónomo)</div>
+    <div class="brand-bar">nd-bot v8 (Proteção & PnL Duplo)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -287,6 +287,9 @@ async def dashboard_page(request: Request):
                     const pos = data.active_position;
                     const sideColor = pos.side === 'SHORT' ? '#f87171' : '#4ade80';
                     const cleanName = cleanCoinName(pos.symbol);
+                    const pnlPct = pos.pnl_unrealized;
+                    const pnlUsdt = (pnlPct / 100) * (pos.amount * pos.entry_price);
+                    
                     posCard.innerHTML = `
                         <div style="margin-bottom:8px;">
                             <div style="font-size:22px; font-weight:900; color:#f8fafc; margin-bottom:4px;"><b>${{cleanName}}</b></div>
@@ -294,7 +297,7 @@ async def dashboard_page(request: Request):
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
                             <div>Preço Atual: <b style="color:${{sideColor}};">${{pos.current_price.toFixed(5)}}</b></div>
-                            <div>PNL N.Realiz.: ${{formatColoredPct(pos.pnl_unrealized)}}</div>
+                            <div>PnL: ${{formatColoredPct(pnlPct)}} (${{formatColoredValue(pnlUsdt, 4)}} USDT)</div>
                         </div>
                         <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
                             <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">${{pos.entry_price.toFixed(5)}}</b></div>
@@ -479,7 +482,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP COM EXECUÇÃO AUTOMÁTICA NA BYBIT)
+            # GESTÃO DA POSIÇÃO ATIVA (STOP E TRAILING STOP AUTOMÁTICO NA BYBIT)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -511,7 +514,6 @@ async def trading_loop():
                     if should_close:
                         try:
                             clean_sym = clean_name_log(symbol)
-                            # EXECUTAR FECHO AUTOMÁTICO IMEDIATO NA CORRETORA
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
                             
                             pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
@@ -522,7 +524,7 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': close_reason or 'Fechado Automático (Trailing Stop)'
+                                'reason': close_reason or 'Fechado Automático (Stop)'
                             })
                             active_position = None
                             max_profit_reached = 0.0
@@ -531,7 +533,7 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS (TENDÊNCIA CONFIRMADA)
+            # ABERTURA DE NOVAS ORDENS (TENDÊNCIA RIGOROSA)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
