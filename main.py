@@ -41,7 +41,7 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-last_api_error = "ND-SCALPING Ativo (6 Pares & Break-Even)!"
+last_api_error = "ND-SCALPING Ativo (6 Pares & Estável)!"
 
 def get_order_amount(symbol):
     sym_upper = symbol.upper()
@@ -84,7 +84,7 @@ async def fetch_live_balance():
                 for acc in result_list:
                     for coin in acc.get('coin', []):
                         if coin.get('coin') == 'USDT':
-                            live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or coin.get('availableToWithdraw', 0.0) or 0.0)
+                            live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
 
         if live_bal > 0:
             if initial_account_balance == 0.0:
@@ -156,7 +156,6 @@ async def dashboard_page(request: Request):
         .nav-item.active {{ color: #4ade80; font-weight: 800; }}
         input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
         button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }}
-        .mini-chart {{ width: 100%; height: 40px; margin-top: 8px; }}
     </style>
 </head>
 <body>
@@ -272,32 +271,6 @@ async def dashboard_page(request: Request):
             }}
         }}
 
-        function generateMiniSvg(history, isLong = true) {{
-            if (!history || history.length < 2) {{
-                history = [50, 52, 48, 55, 53, 60];
-            }}
-            const min = Math.min(...history);
-            const max = Math.max(...history);
-            const range = max - min || 1;
-            const width = 200;
-            const height = 40;
-            
-            const points = history.map((val, idx) => {{
-                const x = (idx / (history.length - 1)) * width;
-                const y = height - ((val - min) / range) * (height - 10) - 5;
-                return `${{x}},${{y}}`;
-            }}).join(' ');
-
-            const strokeColor = isLong ? '#4ade80' : '#f87171';
-
-            return `
-                <svg class="mini-chart" viewBox="0 0 ${{width}} ${{height}}" preserveAspectRatio="none">
-                    <line x1="0" y1="${{height/2}}" x2="${{width}}" y2="${{height/2}}" stroke="#2a374a" stroke-dasharray="3,3" stroke-width="1" />
-                    <polyline fill="none" stroke="${{strokeColor}}" stroke-width="2" points="${{points}}" />
-                </svg>
-            `;
-        }}
-
         async function updateDashboardData() {{
             try {{
                 const response = await fetch('/api/state');
@@ -333,7 +306,6 @@ async def dashboard_page(request: Request):
                     const cleanName = cleanCoinName(pos.symbol);
                     const pnlPct = pos.pnl_unrealized;
                     const pnlUsdt = (pnlPct / 100) * (pos.amount * pos.entry_price);
-                    const chartSvg = generateMiniSvg([pos.entry_price, pos.lowest_price, pos.current_price, pos.highest_price], pos.side === 'LONG');
                     
                     posCard.innerHTML = `
                         <div style="margin-bottom:8px;">
@@ -352,7 +324,6 @@ async def dashboard_page(request: Request):
                             <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">${{pos.highest_price}}</b></div>
                             <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">${{pos.lowest_price}}</b></div>
                         </div>
-                        <div>${{chartSvg}}</div>
                     `;
                 }} else {{
                     posCard.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:15px;">Nenhuma posição ativa no momento.</div>`;
@@ -365,16 +336,14 @@ async def dashboard_page(request: Request):
                     const cleanName = cleanCoinName(sym);
                     const signalText = info.signal || 'NEUTRO';
                     const signalBadge = `<span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{signalText}}</span>`;
-                    const chartSvg = generateMiniSvg([info.price * 0.99, info.price * 1.001, info.price * 0.998, info.price], info.signal === 'LONG');
                     
                     mercadoHtml += `
-                        <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                                <div style="font-size:18px; font-weight:900; color:#f8fafc;"><b>${{cleanName}}</b></div>
-                                ${{signalBadge}}
+                        <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a; display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-size:16px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}}</b></div>
+                                <div style="font-size:12px; color:#94a3b8;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
                             </div>
-                            <div style="font-size:12px; color:#94a3b8; margin-bottom:4px;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
-                            ${{chartSvg}}
+                            <div>${{signalBadge}}</div>
                         </div>
                     `;
                 }}
@@ -387,7 +356,6 @@ async def dashboard_page(request: Request):
                     let histHtml = '';
                     for (const t of data.closed_trades) {{
                         const cleanName = cleanCoinName(t.symbol);
-                        const pnlPctDisplay = t.pnl_pct ? (t.pnl_pct * 100).toFixed(2) + '%' : '0.00%';
                         histHtml += `
                             <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
@@ -396,7 +364,7 @@ async def dashboard_page(request: Request):
                                 </div>
                                 <div style="display:flex; justify-content:space-between; font-size:12px; color:#94a3b8;">
                                     <span>Fechado via ${{t.reason || 'Take Profit'}}</span>
-                                    <b>Retorno: ${{formatColoredPct(t.pnl_pct * 100 || 0)}}</b>
+                                    <b>Retorno: ${{formatColoredPct(t.pnl_pct || 0)}}</b>
                                 </div>
                             </div>
                         `;
@@ -447,7 +415,7 @@ async def toggle_bot():
                 'symbol': symbol,
                 'side': side,
                 'pnl_usdt': pnl_usdt,
-                'pnl_pct': pnl_pct * leverage,
+                'pnl_pct': pnl_pct * leverage * 100,
                 'reason': 'Paragem Manual do Utilizador'
             })
             
@@ -551,7 +519,7 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # 3. GESTÃO DA POSIÇÃO ATIVA (BREAK-EVEN & 0.75% TP)
+            # 3. GESTÃO DA POSIÇÃO ATIVA
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -610,7 +578,7 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'pnl_pct': pnl_pct * leverage,
+                                'pnl_pct': pnl_pct * leverage * 100,
                                 'reason': close_reason
                             })
                             active_position = None
@@ -620,7 +588,7 @@ async def trading_loop():
                             last_api_error = f"Erro fecho: {str(e)}"
                             logging.error(last_api_error)
 
-            # 4. ABERTURA DE NOVAS ORDENS (BLINDADO CONTRA MERCADO NEUTRO)
+            # 4. ABERTURA DE NOVAS ORDENS
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = get_order_amount(best_sym)
