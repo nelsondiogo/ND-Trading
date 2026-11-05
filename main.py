@@ -65,7 +65,6 @@ async def dashboard_page(request: Request):
                 if initial_account_balance == 0.0:
                     initial_account_balance = live_bal
 
-                # O saldo ATUAL é SEMPRE atualizado em tempo real (mesmo que PARADO)
                 floating_pnl_usdt = 0.0
                 if active_position:
                     curr_p = active_position.get('current_price', active_position['entry_price'])
@@ -301,7 +300,6 @@ async def trading_loop():
             current_conf = config.load_config()
             leverage = current_conf.get("LEVERAGE", 10)
 
-            # Sincronização em cada ciclo com a Bybit
             if active_position:
                 try:
                     positions = await exchange_mgr.exchange.fetch_positions([active_position['symbol']])
@@ -368,7 +366,6 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    # Executa a Regra de Ouro (Trailing Stop de 25%)
                     should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
 
                     if should_close and bot_running:
@@ -379,14 +376,16 @@ async def trading_loop():
                             closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt})
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Trava de 25% acionada! Posição fechada em {symbol}"
+                            last_api_error = f"Trava de recuo acionada! Posição fechada em {symbol}"
                         except Exception as e:
                             last_api_error = f"Erro ao fechar: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
                 last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
-                amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
+                
+                # Tamanho de lote seguro para evitar o erro 110007 (saldo insuficiente)
+                amount = 1.0 if 'DOGE' in best_sym else 0.1
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
@@ -402,9 +401,9 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA a favor da tendência em {best_sym} ({best_sig})!"
+                        last_api_error = f"Ordem ABERTA com sucesso em {best_sym} ({best_sig})!"
                 except Exception as e:
-                    last_api_error = f"ERRO BYBIT: {str(e)}"
+                    last_api_error = f"ERRO BYBIT (Margem/Lote): {str(e)}"
                     logging.error(last_api_error)
 
         except Exception as e:
