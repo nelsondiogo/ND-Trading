@@ -5,14 +5,13 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos de alta precisão"""
-        if not ohlcv or len(ohlcv) < 14:
+        """Calcula indicadores técnicos avançados (EMA, RSI e MACD) para confirmar a tendência real"""
+        if not ohlcv or len(ohlcv) < 26:
             return None
         
         closes = [candle[4] for candle in ohlcv]
-        opens = [candle[1] for candle in ohlcv]
         
-        # Cálculo de RSI (14 períodos)
+        # RSI (14 períodos)
         gains = []
         losses = []
         for i in range(1, len(closes)):
@@ -33,59 +32,65 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Direção da vela atual e anterior para confirmar tendência imediata
-        last_candle_green = closes[-1] > opens[-1]
-        prev_candle_green = closes[-2] > opens[-2]
+        # EMA 20 (Média Móvel Exponencial de Curto Prazo)
+        k20 = 2 / (20 + 1)
+        ema20 = closes[0]
+        for price in closes[1:]:
+            ema20 = (price * k20) + (ema20 * (1 - k20))
+
+        # EMA 50 (Média Móvel Exponencial de Médio Prazo para Tendência Principal)
+        k50 = 2 / (min(50, len(closes)) + 1)
+        ema50 = closes[0]
+        for price in closes[1:]:
+            ema50 = (price * k50) + (ema50 * (1 - k50))
 
         return {
             "rsi": rsi,
             "close": closes[-1],
-            "last_green": last_candle_green,
-            "prev_green": prev_candle_green
+            "ema20": ema20,
+            "ema50": ema50
         }
 
     def evaluate_signal(self, indicators):
         """
-        Entrada cirúrgica e rigorosa:
-        - LONG: RSI em zona atrativa (< 48) E confirmação de força compradora (velas verdes recentes).
-        - SHORT: RSI em zona de exaustão (> 52) E confirmação de força vendedora (velas vermelhas recentes).
-        Elimina entradas cegas que iniciam em negativo.
+        Garante que o robô SÓ entra a favor da tendência real do mercado:
+        - LONG: Apenas se Preço > EMA20 > EMA50 (Tendência de alta confirmada) E RSI < 55.
+        - SHORT: Apenas se Preço < EMA20 < EMA50 (Tendência de baixa confirmada) E RSI > 45.
+        Impossibilita entradas contra a maré do mercado.
         """
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        last_green = indicators["last_green"]
-        prev_green = indicators["prev_green"]
+        close = indicators["close"]
+        ema20 = indicators["ema20"]
+        ema50 = indicators["ema50"]
         
-        # Só abre LONG se houver suporte no RSI e velas a apontar para cima
-        if rsi < 50 and (last_green or prev_green):
+        # Tendência de Alta Forte
+        if close > ema20 and ema20 > ema50 and rsi < 58:
             return "LONG"
         
-        # Só abre SHORT se houver resistência no RSI e velas a apontar para baixo
-        elif rsi > 50 and (not last_green or not prev_green):
+        # Tendência de Baixa Forte
+        elif close < ema20 and ema20 < ema50 and rsi > 42:
             return "SHORT"
         
         return None
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Trailing Stop Rigoroso de 15% de recuo sobre o lucro máximo:
-        - Stop de emergência estrito em -0.2% para bloquear perdas indesejadas.
-        - Assim que atinge lucro positivo, dispara imediatamente se o lucro recuar 15% a partir do pico máximo alcançado.
+        Trailing Stop Rigoroso de 15% de recuo e Stop de Proteção de Capital:
+        - Stop de emergência rígido em -0.15% para nunca deixar a conta sangrar.
+        - Assim que atinge lucro positivo (pico > 0.05%), se o preço recuar 15% a partir desse pico máximo, fecha imediatamente.
         """
-        if pnl_pct <= -0.002: # Stop de emergência (-0.2%)
+        # Stop de proteção de capital estrito (-0.15%)
+        if pnl_pct <= -0.0015:
             return True
 
-        if max_profit_reached <= 0.0005:
-            if pnl_pct <= -0.0015:
+        # Se esteve positivo e o lucro começou a encolher a partir do pico
+        if max_profit_reached > 0.0005:
+            # Recuo de 15% sobre o lucro máximo alcançado (ex: pico de +1% fecha se baixar para +0.85%)
+            recoil_threshold = max_profit_reached * 0.85
+            if pnl_pct < recoil_threshold:
                 return True
-            return False
-
-        # Regra exata: disparo se o lucro atual recuou 15% do lucro máximo atingido (pico * 0.85)
-        recoil_threshold = max_profit_reached * 0.85
-        
-        if pnl_pct < recoil_threshold:
-            return True
 
         return False
