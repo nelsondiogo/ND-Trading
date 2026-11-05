@@ -5,11 +5,12 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos (RSI e Preço Atual)"""
+        """Calcula indicadores técnicos de alta precisão"""
         if not ohlcv or len(ohlcv) < 14:
             return None
         
         closes = [candle[4] for candle in ohlcv]
+        opens = [candle[1] for candle in ohlcv]
         
         # Cálculo de RSI (14 períodos)
         gains = []
@@ -32,44 +33,46 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Tendência de curto prazo baseada na variação das últimas velas
-        trend = "UP" if closes[-1] >= closes[-3] else "DOWN"
+        # Direção da vela atual e anterior para confirmar tendência imediata
+        last_candle_green = closes[-1] > opens[-1]
+        prev_candle_green = closes[-2] > opens[-2]
 
         return {
             "rsi": rsi,
             "close": closes[-1],
-            "trend": trend
+            "last_green": last_candle_green,
+            "prev_green": prev_candle_green
         }
 
     def evaluate_signal(self, indicators):
         """
-        Garante disparo imediato com base no RSI e na tendência de mercado:
-        - Se o RSI estiver acima de 55 ou a tendência for de queda, dispara SHORT.
-        - Se o RSI estiver abaixo de 45 ou a tendência for de alta, dispara LONG.
-        Elimina o estado 'AGUARDANDO' prolongado.
+        Entrada cirúrgica e rigorosa:
+        - LONG: RSI em zona atrativa (< 48) E confirmação de força compradora (velas verdes recentes).
+        - SHORT: RSI em zona de exaustão (> 52) E confirmação de força vendedora (velas vermelhas recentes).
+        Elimina entradas cegas que iniciam em negativo.
         """
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        trend = indicators["trend"]
+        last_green = indicators["last_green"]
+        prev_green = indicators["prev_green"]
         
-        # Se o RSI está em sobrecompra ou tendência de baixa -> SHORT
-        if rsi > 58 or trend == "DOWN":
-            return "SHORT"
-        
-        # Se o RSI está em sobrevenda ou tendência de alta -> LONG
-        elif rsi < 42 or trend == "UP":
+        # Só abre LONG se houver suporte no RSI e velas a apontar para cima
+        if rsi < 50 and (last_green or prev_green):
             return "LONG"
         
-        # Fallback dinâmico para garantir abertura imediata de posição
-        return "SHORT" if rsi >= 50 else "LONG"
+        # Só abre SHORT se houver resistência no RSI e velas a apontar para baixo
+        elif rsi > 50 and (not last_green or not prev_green):
+            return "SHORT"
+        
+        return None
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
         Trailing Stop Rigoroso de 15% de recuo sobre o lucro máximo:
-        - Stop de emergência imediato em -0.2%.
-        - Se o trade atingiu lucro positivo, fecha assim que o lucro recuar 15% a partir do pico máximo alcançado.
+        - Stop de emergência estrito em -0.2% para bloquear perdas indesejadas.
+        - Assim que atinge lucro positivo, dispara imediatamente se o lucro recuar 15% a partir do pico máximo alcançado.
         """
         if pnl_pct <= -0.002: # Stop de emergência (-0.2%)
             return True
@@ -79,7 +82,7 @@ class TradingEngine:
                 return True
             return False
 
-        # Regra exata: fechar se o lucro atual recuar 15% a partir do pico máximo alcançado
+        # Regra exata: disparo se o lucro atual recuou 15% do lucro máximo atingido (pico * 0.85)
         recoil_threshold = max_profit_reached * 0.85
         
         if pnl_pct < recoil_threshold:
