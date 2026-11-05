@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Saída por Inversão de Sinal & Stop Rigoroso)</div>
+    <div class="brand-bar">nd-bot v8 (Auditoria & Stop por Inversão)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -440,8 +440,7 @@ async def trading_loop():
 
             await fetch_live_balance()
 
-            # 1. VARREDURA DO MERCADO PRIMEIRO PARA OBTER OS SINAIS ATUAIS DE TODOS OS PARES
-            t_start = time.time()
+            # 1. VARREDURA COMPLETA DO MERCADO PRIMEIRO PARA ATUALIZAR TODOS OS SINAIS EM TEMPO REAL
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
 
@@ -501,7 +500,7 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # 3. GESTÃO DA POSIÇÃO ATIVA (AVALIAÇÃO DE SAÍDA POR SINAL OU TRAILING STOP)
+            # 3. GESTÃO DA POSIÇÃO ATIVA (AVALIAÇÃO IMEDIATA DE INVERSÃO DE SINAL OU TRAILING STOP)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -528,8 +527,8 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    # Obtém o sinal atual do par ativo
-                    current_pair_signal = scanned_pairs_data.get(symbol, {}).get('signal') # 'LONG', 'SHORT' ou None (Neutro)
+                    # Obtém o sinal atual exato do par em execução
+                    current_pair_signal = scanned_pairs_data.get(symbol, {}).get('signal')
 
                     should_close, close_reason = trading_engine.evaluate_exit_condition(
                         pnl_pct, max_profit_reached, side, current_pair_signal
@@ -543,7 +542,7 @@ async def trading_loop():
                             try:
                                 positions = await exchange_mgr.exchange.fetch_positions([symbol])
                                 for p in positions:
-                                    if p.get('symbol') == symbol:
+                                    if p.get('symbol'] == symbol:
                                         sz = float(p.get('contracts', 0.0) or p.get('size', 0.0))
                                         if sz > 0:
                                             close_amount = sz
