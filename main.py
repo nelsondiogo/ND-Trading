@@ -510,6 +510,7 @@ async def trading_loop():
 
                     if should_close:
                         try:
+                            clean_sym = clean_name_log(symbol)
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
                             pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
@@ -523,7 +524,7 @@ async def trading_loop():
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_name_log(symbol)} (Trailing Stop 15%)!"
+                            last_api_error = f"Fechado com sucesso em {clean_sym} (Trailing Stop 15%)!"
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
@@ -535,6 +536,7 @@ async def trading_loop():
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
                     if order:
+                        clean_sym = clean_name_log(best_sym)
                         active_position = {
                             'symbol': best_sym, 'side': best_sig,
                             'entry_price': curr_price,
@@ -545,8 +547,9 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA em {clean_name_log(best_sym)} ({best_sig})!"
+                        last_api_error = f"Ordem ABERTA em {clean_sym} ({best_sig})!"
                 except Exception as e:
+                    clean_sym = clean_name_log(best_sym)
                     last_api_error = f"ERRO BYBIT (Margem/Lote): {str(e)}"
                     logging.error(last_api_error)
 
@@ -559,7 +562,7 @@ async def trading_loop():
 def clean_name_log(symbol):
     if not symbol:
         return ""
-    return symbol.split('/')[0].toUpperCase()
+    return str(symbol).split('/')[0].upper()
 
 @app.on_event("startup")
 async def startup_event():
