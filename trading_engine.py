@@ -24,9 +24,9 @@ class TradingEngine:
                 rs = avg_gain / avg_loss
                 rsi = 100.0 - (100.0 / (1.0 + rs))
 
-            # Tendência de curto prazo via Média Móvel Simples (SMA 5 vs SMA 15)
-            sma_fast = np.mean(closes[-5:])
-            sma_slow = np.mean(closes[-15:])
+            # Médias móveis rápidas para confirmar a direção exata do fluxo
+            sma_fast = np.mean(closes[-3:])
+            sma_slow = np.mean(closes[-10:])
 
             return {
                 'rsi': float(rsi),
@@ -46,24 +46,25 @@ class TradingEngine:
         sma_fast = indicators.get('sma_fast', 0.0)
         sma_slow = indicators.get('sma_slow', 0.0)
 
-        # Regra de Ouro: Só entra a favor da tendência real de mercado
-        if rsi > 52 and sma_fast > sma_slow:
+        # REGRA DE OURO RIGOROSA: Nunca entrar contra o mercado
+        # Apenas abre LONG se houver força compradora clara (RSI > 51 e preço acima da média rápida)
+        if rsi > 51.0 and sma_fast >= sma_slow:
             return "LONG"
-        elif rsi < 48 and sma_fast < sma_slow:
+        # Apenas abre SHORT se houver pressão vendedora clara (RSI < 49 e preço abaixo da média rápida)
+        elif rsi < 49.0 and sma_fast <= sma_slow:
             return "SHORT"
         else:
             return "NEUTRAL"
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
-        # REGRA DE OURO DA SAÍDA:
-        # Se atingiu lucro positivo (ex: > 0.15%), e o preço recuar 25% desse topo -> FECHA IMEDIATAMENTE
-        if max_profit_reached > 0.0015:
-            lucro_restante = pnl_pct / max_profit_reached
-            if lucro_restante <= 0.75:  # Perdeu 25% do topo alcançado
+        # REGRA DE RECUO DO PICO DE LUCRO (Trailing Stop de 25% do lucro obtido)
+        if max_profit_reached > 0.0010:  # Assim que ultrapassar 0.10% de lucro
+            # Se o lucro atual cair abaixo de 75% do lucro máximo alcançado (perdeu 25% do topo)
+            if pnl_pct <= (max_profit_reached * 0.75):
                 return True
 
-        # Stop Loss de emergência caso a operação entre logo a perder (-0.8%)
-        if pnl_pct <= -0.008:
+        # Stop loss de proteção estrita para evitar reversões bruscas (-0.6%)
+        if pnl_pct <= -0.006:
             return True
 
         return False
