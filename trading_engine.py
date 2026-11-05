@@ -5,7 +5,7 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores de alta precisão e estrutura de velas"""
+        """Calcula dados de velas e indicadores de precisão milimétrica"""
         if not ohlcv or len(ohlcv) < 30:
             return None
         
@@ -35,21 +35,21 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        c1 = {'open': opens[-3], 'close': closes[-3]}
-        c2 = {'open': opens[-2], 'close': closes[-2]}
-        c3 = {'open': opens[-1], 'close': closes[-1]}
+        c1 = {'open': opens[-2], 'high': highs[-2], 'low': lows[-2], 'close': closes[-2]}
+        c2 = {'open': opens[-1], 'high': highs[-1], 'low': lows[-1], 'close': closes[-1]}
 
         return {
             "rsi": rsi,
             "close": closes[-1],
             "c1": c1,
-            "c2": c2,
-            "c3": c3
+            "c2": c2
         }
 
     def evaluate_signal(self, indicators):
         """
-        Entrada Rigorosa: Bloqueia totalmente mercados neutros e exige arranque claro.
+        Leitura Milimétrica e Crítica de Entrada:
+        - LONG: Exige que a vela anterior tenha fechado em alta ou suporte e a atual rompa o topo anterior com RSI > 50.
+        - SHORT: Exige que a vela anterior tenha rejeitado o topo e a atual rompa o fundo anterior com RSI < 50.
         """
         if not indicators:
             return None
@@ -57,31 +57,28 @@ class TradingEngine:
         rsi = indicators["rsi"]
         c1 = indicators["c1"]
         c2 = indicators["c2"]
-        c3 = indicators["c3"]
 
-        body1 = c1["close"] - c1["open"]
-        body2 = c2["close"] - c2["open"]
-        body3 = c3["close"] - c3["open"]
+        body_c1 = c1["close"] - c1["open"]
+        body_c2 = c2["close"] - c2["open"]
 
-        # LONG Estrito
-        is_long_setup = (body2 <= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 > 0)
-        if is_long_setup and 45 <= rsi <= 65:
+        # LONG Milimétrico: Vela anterior positiva ou a corrigir para cima, e vela atual a arrancar com força compradora real
+        is_long_valid = (body_c1 >= 0) and (body_c2 > 0) and (c2["close"] > c1["high"])
+        if is_long_valid and rsi >= 50 and rsi <= 68:
             return "LONG"
 
-        # SHORT Estrito
-        is_short_setup = (body2 >= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 < 0)
-        if is_short_setup and 35 <= rsi <= 55:
+        # SHORT Milimétrico: Vela anterior negativa ou a rejeitar topo, e vela atual a romper o fundo com força vendedora real
+        is_short_valid = (body_c1 <= 0) and (body_c2 < 0) and (c2["close"] < c1["low"])
+        if is_short_valid and rsi <= 50 and rsi >= 32:
             return "SHORT"
         
         return None
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída Estáveis:
-        1. Sem stop loss agressivo no negativo: deixa o mercado corrigir livremente.
-        2. TAKE PROFIT FIRME: Atingiu ou ultrapassou 0.75% (0.0075) alavancado, fecha de imediato!
-        3. MUDANÇA DE DIREÇÃO: Se o sinal inverter, fecha para proteger o capital.
-        4. RECUO DE LUCRO FIRME: Se o lucro atingir o pico e recuar, tranca o ganho.
+        Regras de Saída Milimétricas:
+        1. TAKE PROFIT FIRME: Atingiu ou ultrapassou 0.75% (0.0075) alavancado, fecha de imediato!
+        2. MUDANÇA DE DIREÇÃO / NEUTRALIDADE: Fecha logo se o mercado virar contra a posição.
+        3. RECUO DE LUCRO: Protege o ganho acumulado se o preço recuar do pico.
         """
         leveraged_pnl = pnl_pct * leverage
         leveraged_max_profit = max_profit_reached * leverage
@@ -90,8 +87,12 @@ class TradingEngine:
         if leveraged_pnl >= 0.0075:
             return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
 
-        # Se estiver no prejuízo, NÃO fecha de imediato; deixa o mercado respirar/corrigir.
+        # Se estiver no prejuízo, deixamos o mercado corrigir, mas se o sinal inverter por completo, fechamos para proteger
         if pnl_pct <= 0:
+            if active_side == 'LONG' and current_signal == 'SHORT':
+                return True, "Proteção Cirúrgica (Inversão para SHORT no prejuízo)"
+            if active_side == 'SHORT' and current_signal == 'LONG':
+                return True, "Proteção Cirúrgica (Inversão para LONG no prejuízo)"
             return False, None
 
         # 2. Mudança de Direção ou Neutralidade com Lucro
