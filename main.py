@@ -68,7 +68,6 @@ async def dashboard_page(request: Request):
                 else:
                     current_account_balance = initial_account_balance + total_realized_pnl
         except Exception as e:
-            last_api_error = str(e)
             logging.error(f"Erro ao ler saldo: {e}")
 
     status_str = "OPERANDO" if bot_running else "PARADO"
@@ -158,7 +157,7 @@ async def dashboard_page(request: Request):
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b style="color:#4ade80;">++{total_realized_pnl:.6f}</b></div>
                 </div>
                 <div class="card" style="border-left: 4px solid #f87171; background:#1e1b2e;">
-                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ESTADO / LOG DA API:</span><br>
+                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ERRO DETALHADO DA BYBIT:</span><br>
                     <span style="font-size:12px; color:#f8fafc; word-break: break-all;">{last_api_error}</span>
                 </div>
                 <form action="/toggle_bot" method="post">
@@ -316,17 +315,8 @@ async def trading_loop():
                 last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Garante que usamos a alavancagem de 18x para ultrapassar os 5.0 USDT mínimos da Bybit
-                usable_balance = max(0.33, current_account_balance)
-                target_notional = usable_balance * leverage * 0.95
-                amount = target_notional / curr_price
-                
-                if 'DOGE' in best_sym:
-                    amount = max(70.0, round(amount, 0))
-                elif 'XRP' in best_sym:
-                    amount = max(5.0, round(amount, 1))
-                else:
-                    amount = max(0.1, round(amount, 2))
+                # Montante fixo mínimo seguro para testes de contrato na Bybit (ex: 10 DOGE)
+                amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
@@ -338,10 +328,9 @@ async def trading_loop():
                         }
                         max_profit_reached = 0.0
                         last_api_error = f"Ordem ABERTA em {best_sym} (Qtd: {amount})!"
-                    else:
-                        last_api_error = f"Bybit recusou a ordem em {best_sym}."
                 except Exception as e:
-                    last_api_error = f"Erro API Bybit: {str(e)}"
+                    # Captura e exibe a mensagem de erro EXATA devolvida pela Bybit no painel
+                    last_api_error = f"ERRO BYBIT: {str(e)}"
                     logging.error(last_api_error)
 
         except Exception as e:
