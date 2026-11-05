@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Fecho Blindado & ReduceOnly)</div>
+    <div class="brand-bar">nd-bot v8 (Trailing Stop Baseado em Lucro)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -473,45 +473,18 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            t_start = time.time()
-            tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
-            results = await asyncio.gather(*tasks)
-
-            scanned_pairs_data.clear()
-            best_sig = None
-            best_sym = None
-
-            for symbol, ohlcv, current_price, _ in results:
-                if not ohlcv or not current_price:
-                    continue
-                indicators = trading_engine.calculate_indicators(ohlcv)
-                if not indicators:
-                    continue
-                sig = trading_engine.evaluate_signal(indicators)
-
-                scanned_pairs_data[symbol] = {
-                    'price': current_price,
-                    'rsi': indicators['rsi'],
-                    'signal': sig
-                }
-
-                if sig in ['LONG', 'SHORT'] and not best_sym:
-                    best_sig = sig
-                    best_sym = symbol
-
-            # GESTÃO DA POSIÇÃO ATIVA (STOP RIGOROSO COM REDUCEONLY)
+            # GESTÃO DA POSIÇÃO ATIVA (BUSCA TICKER EM TEMPO REAL)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
                 side = active_position['side']
-                curr_price = scanned_pairs_data.get(symbol, {}).get('price')
-
-                if not curr_price:
-                    try:
-                        ticker = await exchange_mgr.exchange.fetch_ticker(symbol)
-                        curr_price = ticker['last']
-                    except Exception:
-                        curr_price = entry_price
+                
+                curr_price = None
+                try:
+                    ticker = await exchange_mgr.exchange.fetch_ticker(symbol)
+                    curr_price = ticker['last']
+                except Exception:
+                    curr_price = scanned_pairs_data.get(symbol, {}).get('price', entry_price)
 
                 if curr_price:
                     if curr_price > active_position.get('highest_price', entry_price):
@@ -554,14 +527,40 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': close_reason or 'Fechado Automático (Stop)'
+                                'reason': close_reason or 'Trailing Stop'
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_sym} ({close_reason})!"
+                            last_api_error = f"Fechado com lucro em {clean_sym} ({close_reason})!"
                         except Exception as e:
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
+
+            t_start = time.time()
+            tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
+            results = await asyncio.gather(*tasks)
+
+            scanned_pairs_data.clear()
+            best_sig = None
+            best_sym = None
+
+            for symbol, ohlcv, current_price, _ in results:
+                if not ohlcv or not current_price:
+                    continue
+                indicators = trading_engine.calculate_indicators(ohlcv)
+                if not indicators:
+                    continue
+                sig = trading_engine.evaluate_signal(indicators)
+
+                scanned_pairs_data[symbol] = {
+                    'price': current_price,
+                    'rsi': indicators['rsi'],
+                    'signal': sig
+                }
+
+                if sig in ['LONG', 'SHORT'] and not best_sym:
+                    best_sig = sig
+                    best_sym = symbol
 
             # ABERTURA DE NOVAS ORDENS (APENAS SE O BOT ESTIVER LIGADO E O SINAL FOR FORTE)
             if best_sig and best_sym and bot_running and not active_position:
