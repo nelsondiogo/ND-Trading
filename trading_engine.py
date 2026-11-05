@@ -5,8 +5,8 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos de alta precisão (EMA, RSI e MACD)"""
-        if not ohlcv or len(ohlcv) < 35:
+        """Calcula indicadores de alta velocidade para Scalping (EMA 9, EMA 21 e RSI)"""
+        if not ohlcv or len(ohlcv) < 30:
             return None
         
         closes = [candle[4] for candle in ohlcv]
@@ -32,80 +32,75 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # MACD (EMA12 - EMA26)
-        k12 = 2 / (12 + 1)
-        k26 = 2 / (26 + 1)
-        ema12 = closes[0]
-        ema26 = closes[0]
+        # EMA 9 (Curta e Rápida)
+        k9 = 2 / (9 + 1)
+        ema9 = closes[0]
         for price in closes[1:]:
-            ema12 = (price * k12) + (ema12 * (1 - k12))
-            ema26 = (price * k26) + (ema26 * (1 - k26))
-        
-        macd_line = ema12 - ema26
+            ema9 = (price * k9) + (ema9 * (1 - k9))
 
-        # EMA 50
-        k50 = 2 / (min(50, len(closes)) + 1)
-        ema50 = closes[0]
+        # EMA 21 (Média)
+        k21 = 2 / (21 + 1)
+        ema21 = closes[0]
         for price in closes[1:]:
-            ema50 = (price * k50) + (ema50 * (1 - k50))
+            ema21 = (price * k21) + (ema21 * (1 - k21))
 
         return {
             "rsi": rsi,
             "close": closes[-1],
-            "macd": macd_line,
-            "ema50": ema50
+            "ema9": ema9,
+            "ema21": ema21
         }
 
     def evaluate_signal(self, indicators):
         """
-        Filtro Rigoroso para Scalping de Alta Frequência:
-        - LONG: Preço > EMA50 E MACD > 0 E RSI < 65.
-        - SHORT: Preço < EMA50 E MACD < 0 E RSI > 35.
+        Filtro Ultra-Rigoroso para Scalping (Evita entradas falsas):
+        - LONG: EMA9 > EMA21 E RSI entre 45 e 65.
+        - SHORT: EMA9 < EMA21 E RSI entre 35 e 55.
         """
         if not indicators:
             return None
         
         close = indicators["close"]
-        ema50 = indicators["ema50"]
-        macd = indicators["macd"]
+        ema9 = indicators["ema9"]
+        ema21 = indicators["ema21"]
         rsi = indicators["rsi"]
         
-        if close > ema50 and macd > 0 and rsi < 65:
+        if ema9 > ema21 and 45 <= rsi <= 65:
             return "LONG"
-        elif close < ema50 and macd < 0 and rsi > 35:
+        elif ema9 < ema21 and 35 <= rsi <= 55:
             return "SHORT"
         
         return None
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída ND-SCALPING (Trava Rígida em 0.75%):
-        1. Proibido fechar no negativo (pnl_pct <= 0 mantém sempre aberto).
-        2. TAKE PROFIT ABSOLUTO EM 0.75%: Se o PnL alavancado atingir ou ultrapassar 0.75% (0.0075), fecha IMEDIATAMENTE!
-        3. Mudança de Direção / Neutralidade com Lucro: Fecha logo para não devolver ganho.
-        4. Trailing Stop de Proteção de Lucro (recuo de 5% do pico máximo).
+        Regras de Saída ND-SCALPING (Proteção Máxima de Lucro):
+        1. Proibido fechar no negativo (pnl_pct <= 0 mantém aberto para recuperar).
+        2. TAKE PROFIT IMEDIATO EM 0.75%: Se o PnL alavancado atingir >= 0.75% (0.0075), fecha de imediato!
+        3. PROTEÇÃO POR REVERSÃO / NEUTRALIDADE: Se o mercado ficar neutro ou inverter e estiver no lucro, fecha logo.
+        4. PROTEÇÃO POR RECUO DE LUCRO: Se o preço recuar ligeiramente do pico de lucro (recuo de 3%), fecha de imediato para não devolver nada!
         """
         if pnl_pct <= 0:
             return False, None
 
-        # PnL real alavancado refletido na interface
         leveraged_pnl = pnl_pct * leverage
+        leveraged_max_profit = max_profit_reached * leverage
 
-        # REGRA INEGOCIÁVEL: Atingiu ou ultrapassou a trava de 0.75% de lucro? Fecha de imediato!
+        # 1. Take Profit Absoluto em 0.75% (Sem espera)
         if leveraged_pnl >= 0.0075:
             return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
 
-        # Se mudou de direção ou ficou neutro e está no lucro, fecha para rodar o capital
+        # 2. Mudança de Direção ou Neutralidade com Lucro
         if active_side == 'LONG' and current_signal in [None, 'SHORT']:
-            return True, f"Saída por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
+            return True, f"Proteção (Sinal mudou para {current_signal or 'NEUTRO'})"
         
         if active_side == 'SHORT' and current_signal in [None, 'LONG']:
-            return True, f"Saída por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
+            return True, f"Proteção (Sinal mudou para {current_signal or 'NEUTRO'})"
 
-        # Trailing Stop Rígido (recuo de 5% do pico se já estiver em ganho)
-        if max_profit_reached > 0.002:
-            recoil_threshold = max_profit_reached * 0.95
-            if pnl_pct < recoil_threshold:
-                return True, "Trailing Stop Rígido (Recuo do Lucro)"
+        # 3. Recuo Imediato do Pico de Lucro (Trailing Stop Ultra-Sensível de 3%)
+        if leveraged_max_profit > 0.002: # Se já esteve com lucro superior a 0.2%
+            # Se o lucro atual caiu mais de 3% em relação ao máximo atingido
+            if pnl_pct < (max_profit_reached * 0.97):
+                return True, f"Proteção por Recuo (Pico: {leveraged_max_profit*100:.2f}%)"
 
         return False, None
