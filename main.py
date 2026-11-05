@@ -288,7 +288,7 @@ async def dashboard_page(request: Request):
                     const cleanName = cleanCoinName(pos.symbol);
                     posCard.innerHTML = `
                         <div style="margin-bottom:8px;">
-                            <div style="font-size:20px; font-weight:900; color:#f8fafc; margin-bottom:4px;">${{cleanName}}</div>
+                            <div style="font-size:22px; font-weight:900; color:#f8fafc; margin-bottom:4px;"><b>${{cleanName}}</b></div>
                             <div><span style="background:${{sideColor}}22; color:${{sideColor}}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">${{pos.side}} (${{data.leverage}}x)</span></div>
                         </div>
                         <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
@@ -313,7 +313,7 @@ async def dashboard_page(request: Request):
                     mercadoHtml += `
                         <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                             <div style="margin-bottom:6px;">
-                                <div style="font-size:18px; font-weight:900; color:#f8fafc; margin-bottom:2px;">${{cleanName}}</div>
+                                <div style="font-size:20px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}}</b></div>
                                 <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
                             </div>
                             <div style="font-size:12px; color:#94a3b8;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
@@ -332,10 +332,10 @@ async def dashboard_page(request: Request):
                         histHtml += `
                             <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                                 <div style="margin-bottom:4px;">
-                                    <div style="font-size:16px; font-weight:900; color:#f8fafc; margin-bottom:2px;">${{cleanName}} (${{t.side}})</div>
+                                    <div style="font-size:18px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}} (${{t.side}})</b></div>
                                     <div>${{formatColoredValue(t.pnl_usdt)}} USDT</div>
                                 </div>
-                                <small style="color:#94a3b8;">Fechado via Trailing Stop (15%)</small>
+                                <small style="color:#94a3b8;">Fechado via ${{t.reason || 'Trailing Stop (15% recuo)'}}</small>
                             </div>
                         `;
                     }}
@@ -352,8 +352,40 @@ async def dashboard_page(request: Request):
 
 @app.post("/toggle_bot", response_class=HTMLResponse)
 async def toggle_bot():
-    global bot_running
+    global bot_running, active_position, total_realized_pnl, closed_trades, last_api_error
     bot_running = not bot_running
+    
+    # Paragem manual: fecha imediatamente a posição e obriga o registo no histórico
+    if not bot_running and active_position:
+        try:
+            symbol = active_position['symbol']
+            side = active_position['side']
+            entry_price = active_position['entry_price']
+            curr_price = active_position.get('current_price', entry_price)
+            amount = active_position['amount']
+            leverage = int(config.load_config().get("LEVERAGE", 17))
+            
+            if exchange_mgr and exchange_mgr.exchange:
+                await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', amount, leverage=leverage)
+            
+            pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
+            pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
+            total_realized_pnl += pnl_usdt
+            
+            closed_trades.insert(0, {
+                'symbol': symbol,
+                'side': side,
+                'pnl_usdt': pnl_usdt,
+                'reason': 'Paragem Manual do Utilizador'
+            })
+            
+            active_position = None
+            max_profit_reached = 0.0
+            last_api_error = "Robô parado manualmente. Posição fechada e registada no histórico!"
+        except Exception as e:
+            last_api_error = f"Erro ao fechar na paragem manual: {str(e)}"
+            logging.error(last_api_error)
+
     return """<html><meta http-equiv="refresh" content="0;url=/"><body></body></html>"""
 
 @app.post("/save", response_class=HTMLResponse)
@@ -411,7 +443,7 @@ async def trading_loop():
                         }
                         max_profit_reached = 0.0
                 else:
-                    if active_position:
+                    if active_position and not bot_running:
                         active_position = None
                         max_profit_reached = 0.0
             except Exception as e:
@@ -443,7 +475,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP / PROTEÇÃO DE LUCRO)
+            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP DE 15% DE RECUO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -472,20 +504,24 @@ async def trading_loop():
 
                     should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
 
-                    # Se o robô estiver PARADO, ele gerencia/fecha apenas posições abertas se necessário, mas NÃO ABRE NOVAS.
                     if should_close:
                         try:
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
                             pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
-                            closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt})
+                            closed_trades.insert(0, {
+                                'symbol': symbol,
+                                'side': side,
+                                'pnl_usdt': pnl_usdt,
+                                'reason': 'Trailing Stop (15% recuo de lucro)'
+                            })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {symbol} (Trailing Stop)!"
+                            last_api_error = f"Fechado com sucesso em {clean_name_log(symbol)} (Trailing Stop 15%)!"
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
-            # ABERTURA DE NOVAS ORDENS: ESTRICTAMENTE BLOQUEADA SE bot_running FOR FALSE!
+            # ABERTURA DE NOVAS ORDENS (EXCLUSIVAMENTE SE bot_running FOR TRUE)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
@@ -503,7 +539,7 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA em {best_sym} ({best_sig})!"
+                        last_api_error = f"Ordem ABERTA em {clean_name_log(best_sym)} ({best_sig})!"
                 except Exception as e:
                     last_api_error = f"ERRO BYBIT (Margem/Lote): {str(e)}"
                     logging.error(last_api_error)
@@ -513,6 +549,11 @@ async def trading_loop():
             logging.error(last_api_error)
 
         await asyncio.sleep(config.SCAN_INTERVAL)
+
+def clean_name_log(symbol):
+    if not symbol:
+        return ""
+    return symbol.split('/')[0].upper()
 
 @app.on_event("startup")
 async def startup_event():
