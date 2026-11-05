@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Alavancagem Dinâmica & Tendência Real)</div>
+    <div class="brand-bar">nd-bot v8 (Proteção Anti-Erro & Stop Rigoroso)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -317,9 +317,10 @@ async def dashboard_page(request: Request):
                 const mercadoContainer = document.getElementById('mercado-container');
                 let mercadoHtml = '';
                 for (const [sym, info] of Object.entries(data.scanned_pairs)) {{
-                    const tagColor = info.signal === 'SHORT' ? '#f87171' : '#4ade80';
+                    const tagColor = info.signal === 'SHORT' ? '#f87171' : (info.signal === 'LONG' ? '#4ade80' : '#94a3b8');
                     const cleanName = cleanCoinName(sym);
-                    const signalBadge = info.signal ? `<span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>` : `<span style="background:#33415522; color:#94a3b8; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">NEUTRO</span>`;
+                    const signalText = info.signal || 'NEUTRO';
+                    const signalBadge = `<span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{signalText}}</span>`;
                     
                     mercadoHtml += `
                         <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
@@ -376,7 +377,17 @@ async def toggle_bot():
             leverage = int(config.load_config().get("LEVERAGE", 17))
             
             if exchange_mgr and exchange_mgr.exchange:
-                await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', amount, leverage=leverage)
+                # Consulta a posição real na corretora para garantir fecho sem erro de margem
+                positions = await exchange_mgr.exchange.fetch_positions([symbol])
+                real_amt = amount
+                for p in positions:
+                    if p.get('symbol') == symbol:
+                        sz = float(p.get('contracts', 0.0) or p.get('size', 0.0))
+                        if sz > 0:
+                            real_amt = sz
+                            break
+                
+                await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', real_amt, leverage=leverage)
             
             pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
             pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
@@ -411,7 +422,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições guardadas, alavancagem atualizada e ligada à Bybit!</h2>
+        <h2 style="color:#4ade80;">Definições guardadas e alavancagem atualizada!</h2>
     </body>
     </html>
     """
@@ -485,11 +496,12 @@ async def trading_loop():
                     'signal': sig
                 }
 
+                # APENAS SELECIONA SINAIS EXPLÍCITOS (LONG OU SHORT), NUNCA NEUTRO
                 if sig in ['LONG', 'SHORT'] and not best_sym:
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (STOP E TRAILING STOP AUTOMÁTICO)
+            # GESTÃO DA POSIÇÃO ATIVA (STOP RIGOROSO E FECHO BLINDADO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -521,9 +533,23 @@ async def trading_loop():
                     if should_close:
                         try:
                             clean_sym = clean_name_log(symbol)
-                            await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
+                            close_amount = active_position['amount']
                             
-                            pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
+                            # Verifica quantidade exata na corretora antes de fechar
+                            try:
+                                positions = await exchange_mgr.exchange.fetch_positions([symbol])
+                                for p in positions:
+                                    if p.get('symbol') == symbol:
+                                        sz = float(p.get('contracts', 0.0) or p.get('size', 0.0))
+                                        if sz > 0:
+                                            close_amount = sz
+                                            break
+                            except Exception:
+                                pass
+
+                            await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', close_amount, leverage=leverage)
+                            
+                            pnl_usdt = pnl_pct * close_amount * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
                             initial_account_balance += pnl_usdt  # Juros compostos automáticos
                             
@@ -540,11 +566,10 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS COM TENDÊNCIA E LOTE MÍNIMO SEGURO
+            # ABERTURA DE NOVAS ORDENS (APENAS COM SINAL FORTE E LOTE MÍNIMO SEGURO)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Atribuição dos mínimos absolutos aceites pela Bybit para evitar erros de margem
                 if 'DOGE' in best_sym:
                     amount = 1.0
                 elif 'XRP' in best_sym:
