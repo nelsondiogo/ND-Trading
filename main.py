@@ -479,7 +479,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP E PROTEÇÃO DE CAPITAL)
+            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP COM GARANTIA DE LUCRO LÍQUIDO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -520,11 +520,11 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': 'Trailing Stop (15% recuo de lucro / Stop de Capital)'
+                                'reason': 'Trailing Stop (Garantia de Lucro / Proteção)'
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_sym} (Stop de Proteção/Lucro)!"
+                            last_api_error = f"Fechado com sucesso em {clean_sym} (Lucro Trancado)!"
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
