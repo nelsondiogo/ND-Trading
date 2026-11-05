@@ -77,20 +77,23 @@ class TradingEngine:
         
         return None
 
-    def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
+    def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída ND-SCALPING (Blindagem Absoluta):
+        Regras de Saída ND-SCALPING (Trava Rígida em 0.75%):
         1. Proibido fechar no negativo (pnl_pct <= 0 mantém sempre aberto).
-        2. TAKE PROFIT IMEDIATO: Se pnl_pct >= 0.005 (0.5%), fecha de imediato sem hesitar!
+        2. TAKE PROFIT ABSOLUTO EM 0.75%: Se o PnL alavancado atingir ou ultrapassar 0.75% (0.0075), fecha IMEDIATAMENTE!
         3. Mudança de Direção / Neutralidade com Lucro: Fecha logo para não devolver ganho.
-        4. Trailing Stop Rígido (recuo de 5% do pico máximo se já passou do alvo).
+        4. Trailing Stop de Proteção de Lucro (recuo de 5% do pico máximo).
         """
         if pnl_pct <= 0:
             return False, None
 
-        # REGRA ABSOLUTA DE SCALPING: Atingiu ou ultrapassou 0.5% de lucro? Fecha imediatamente!
-        if pnl_pct >= 0.005:
-            return True, f"Take Profit 0.5% Atingido ({pnl_pct*100:.2f}%)"
+        # PnL real alavancado refletido na interface
+        leveraged_pnl = pnl_pct * leverage
+
+        # REGRA INEGOCIÁVEL: Atingiu ou ultrapassou a trava de 0.75% de lucro? Fecha de imediato!
+        if leveraged_pnl >= 0.0075:
+            return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
 
         # Se mudou de direção ou ficou neutro e está no lucro, fecha para rodar o capital
         if active_side == 'LONG' and current_signal in [None, 'SHORT']:
@@ -99,8 +102,8 @@ class TradingEngine:
         if active_side == 'SHORT' and current_signal in [None, 'LONG']:
             return True, f"Saída por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
 
-        # Trailing Stop Ultrarrápido (recuo de 5% do pico se já estiver em ganho)
-        if max_profit_reached > 0.003:
+        # Trailing Stop Rígido (recuo de 5% do pico se já estiver em ganho)
+        if max_profit_reached > 0.002:
             recoil_threshold = max_profit_reached * 0.95
             if pnl_pct < recoil_threshold:
                 return True, "Trailing Stop Rígido (Recuo do Lucro)"
