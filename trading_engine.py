@@ -5,7 +5,7 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos avançados (EMA, RSI) para alta precisão de tendência"""
+        """Calcula indicadores técnicos avançados (EMA e RSI) para evitar entradas erradas"""
         if not ohlcv or len(ohlcv) < 26:
             return None
         
@@ -32,13 +32,13 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # EMA 20
+        # EMA 20 (Curto Prazo)
         k20 = 2 / (20 + 1)
         ema20 = closes[0]
         for price in closes[1:]:
             ema20 = (price * k20) + (ema20 * (1 - k20))
 
-        # EMA 50
+        # EMA 50 (Médio Prazo)
         k50 = 2 / (min(50, len(closes)) + 1)
         ema50 = closes[0]
         for price in closes[1:]:
@@ -52,7 +52,11 @@ class TradingEngine:
         }
 
     def evaluate_signal(self, indicators):
-        """Entradas alinhadas com a tendência real (EMA + RSI)"""
+        """
+        Filtro de entrada estrito para eliminar entradas erradas no negativo:
+        - LONG: Apenas se Preço > EMA20 > EMA50 E RSI < 60 (Garante tendência forte de alta).
+        - SHORT: Apenas se Preço < EMA20 < EMA50 E RSI > 40 (Garante tendência forte de baixa).
+        """
         if not indicators:
             return None
         
@@ -61,27 +65,25 @@ class TradingEngine:
         ema20 = indicators["ema20"]
         ema50 = indicators["ema50"]
         
-        # Tendência de Alta
-        if close > ema20 and ema20 > ema50 and rsi < 58:
+        # Tendência de Alta Confirmada
+        if close > ema20 and ema20 > ema50 and rsi < 60:
             return "LONG"
         
-        # Tendência de Baixa
-        elif close < ema20 and ema20 < ema50 and rsi > 42:
+        # Tendência de Baixa Confirmada
+        elif close < ema20 and ema20 < ema50 and rsi > 40:
             return "SHORT"
         
         return None
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Trailing Stop Autónomo e Rigoroso:
-        - Stop de proteção contra perdas bruscas em -0.15%.
-        - Assim que o lucro atinge +0.20%, ativa o rastreio de pico e fecha se houver um recuo de 15% sobre o lucro máximo.
+        Stop Autónomo Rigoroso:
+        - Stop de proteção de capital em -0.15%.
+        - Trailing stop de recuo de 15% ativado após superar +0.20% de lucro.
         """
-        # Stop de emergência de capital
         if pnl_pct <= -0.0015:
             return True, "Stop de Proteção de Capital (-0.15%)"
 
-        # Ativa o trailing stop logo após superar +0.20% de lucro
         if max_profit_reached >= 0.002:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
