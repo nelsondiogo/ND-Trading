@@ -371,7 +371,7 @@ async def toggle_bot():
             pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
             pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
             total_realized_pnl += pnl_usdt
-            initial_account_balance += pnl_usdt  # Juros compostos aplicados
+            initial_account_balance += pnl_usdt  # Juros compostos automáticos
             
             closed_trades.insert(0, {
                 'symbol': symbol,
@@ -528,7 +528,7 @@ async def trading_loop():
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
-            # ABERTURA DE NOVAS ORDENS (DISPARO IMEDIATO)
+            # ABERTURA DE NOVAS ORDENS COM ENTRADA CIRÚRGICA
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
