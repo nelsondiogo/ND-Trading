@@ -263,9 +263,8 @@ async def trading_loop():
             scan_latency_ms = (time.time() - t_start) * 1000
 
             scanned_pairs_data.clear()
-            best_sig = "LONG"
-            best_sym = config.PAIRS[0]  # Seleciona o primeiro par por defeito (DOGE) para garantir execução imediata
-            highest_score = 90
+            best_sig = None
+            best_sym = None
 
             for symbol, ohlcv, current_price, _ in results:
                 if not ohlcv or not current_price:
@@ -274,19 +273,17 @@ async def trading_loop():
                 if not indicators:
                     continue
                 sig = trading_engine.evaluate_signal(indicators)
-                
+
                 scanned_pairs_data[symbol] = {
                     'price': current_price,
                     'rsi': indicators['rsi'],
-                    'signal': sig if sig in ['LONG', 'SHORT'] else 'LONG',
-                    'score': 88
+                    'signal': sig,
+                    'score': 90
                 }
 
-            # Seleciona o primeiro par ativo válido detetado na varredura
-            for sym, data in scanned_pairs_data.items():
-                best_sym = sym
-                best_sig = data['signal']
-                break
+                if sig in ['LONG', 'SHORT'] and not best_sym:
+                    best_sig = sig
+                    best_sym = symbol
 
             if active_position:
                 symbol = active_position['symbol']
@@ -311,24 +308,25 @@ async def trading_loop():
                             closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': 0.002})
                             active_position = None
                             max_profit_reached = 0.0
+                            last_api_error = f"Posição fechada com sucesso em {symbol}"
                         except Exception as e:
-                            last_api_error = f"Erro fecho: {str(e)}"
+                            last_api_error = f"Erro ao fechar: {str(e)}"
 
             if best_sig and best_sym and bot_running and not active_position:
-                last_signal_text = f"Executando {best_sig} em {best_sym}"
+                last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Força o cálculo de quantidade para atingir o poder de compra disponível
-                usable_balance = max(0.1, current_account_balance)
+                # Garante que usamos a alavancagem de 18x para ultrapassar os 5.0 USDT mínimos da Bybit
+                usable_balance = max(0.33, current_account_balance)
                 target_notional = usable_balance * leverage * 0.95
                 amount = target_notional / curr_price
                 
                 if 'DOGE' in best_sym:
-                    amount = max(5.0, round(amount, 0))
+                    amount = max(70.0, round(amount, 0))
                 elif 'XRP' in best_sym:
-                    amount = max(2.0, round(amount, 1))
+                    amount = max(5.0, round(amount, 1))
                 else:
-                    amount = max(0.01, round(amount, 3))
+                    amount = max(0.1, round(amount, 2))
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
@@ -339,13 +337,15 @@ async def trading_loop():
                             'amount': amount, 'score': 90
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Sucesso! Ordem aberta em {best_sym}"
+                        last_api_error = f"Ordem ABERTA em {best_sym} (Qtd: {amount})!"
+                    else:
+                        last_api_error = f"Bybit recusou a ordem em {best_sym}."
                 except Exception as e:
-                    last_api_error = f"Rejeitado Bybit ({best_sym}): {str(e)}"
+                    last_api_error = f"Erro API Bybit: {str(e)}"
                     logging.error(last_api_error)
 
         except Exception as e:
-            last_api_error = f"Erro crítico no loop: {str(e)}"
+            last_api_error = f"Erro no loop: {str(e)}"
             logging.error(last_api_error)
 
         await asyncio.sleep(config.SCAN_INTERVAL)
