@@ -79,17 +79,16 @@ class TradingEngine:
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Trailing Stop Baseado em Lucro:
-        - NUNCA fecha com prejuízo (permite ao preço recuperar).
-        - Ativa o trailing stop apenas se houver lucro positivo (>= +0.15%).
-        - Fecha se o lucro recuar 15% a partir do pico máximo atingido.
+        Trailing Stop Sensível Baseado em Lucro:
+        - Nunca fecha em prejuízo (pnl_pct <= 0).
+        - Assim que atinge qualquer lucro positivo (> 0.0001), ativa o rastreio do pico.
+        - Se o lucro recuar 15% a partir do pico máximo atingido, dispara o fecho.
         """
         if pnl_pct <= 0:
             return False, None
 
-        # Só ativa o trailing se o lucro atingir pelo menos 0.15%
-        if max_profit_reached >= 0.0015:
-            # Recuo de 15% a partir do lucro máximo atingido (ex: pico de 1.0% recua para 0.85%)
+        # Ativa o trailing logo que haja lucro detetado
+        if max_profit_reached > 0.0001:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
                 return True, "Trailing Stop (Recuo de 15% do Lucro Máximo)"
