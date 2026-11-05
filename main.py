@@ -22,8 +22,11 @@ def init_exchange_manager():
         if config.BYBIT_API_KEY and config.BYBIT_API_SECRET:
             exchange_mgr = BybitExchangeManager(config.BYBIT_API_KEY, config.BYBIT_API_SECRET, config.IS_TESTNET)
             logging.info("Exchange manager inicializado com sucesso.")
+        else:
+            exchange_mgr = None
     except Exception as e:
         logging.error(f"Erro ao inicializar exchange manager: {e}")
+        exchange_mgr = None
 
 init_exchange_manager()
 try:
@@ -39,12 +42,37 @@ current_account_balance = 0.0
 total_realized_pnl = 0.0
 closed_trades = []
 scanned_pairs_data = {}
-last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA)!"
+last_api_error = "Insira as chaves na aba Ajustes e guarde!"
 
 @app.get("/api/state")
 async def get_bot_state():
+    global initial_account_balance, current_account_balance
     current_conf = config.load_config()
     leverage = int(current_conf.get("LEVERAGE", 17))
+    
+    # Tenta ler o saldo em tempo real se o exchange_mgr estiver ativo
+    if exchange_mgr and exchange_mgr.exchange:
+        try:
+            balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
+            if 'USDT' in balance_data:
+                live_bal = float(balance_data['USDT'].get('free', 0.0) or balance_data['USDT'].get('total', 0.0) or 0.0)
+                if live_bal > 0:
+                    if initial_account_balance == 0.0:
+                        initial_account_balance = live_bal
+                    
+                    floating_pnl_usdt = 0.0
+                    if active_position:
+                        cp = active_position.get('current_price', active_position['entry_price'])
+                        ep = active_position['entry_price']
+                        amt = active_position['amount']
+                        if active_position['side'] == 'LONG':
+                            floating_pnl_usdt = (cp - ep) * amt * (leverage / 10)
+                        else:
+                            floating_pnl_usdt = (ep - cp) * amt * (leverage / 10)
+                    current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
+        except Exception as e:
+            pass
+
     multiplied = current_account_balance * leverage
     wins = sum(1 for t in closed_trades if t['pnl_usdt'] >= 0)
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -139,9 +167,9 @@ async def dashboard_page(request: Request):
                 <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração & Alavancagem</h2>
                 <form action="/save" method="post">
                     <label style="font-size:12px; color:#94a3b8;">Bybit API Key:</label>
-                    <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
+                    <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" placeholder="Insira a sua API Key" required>
                     <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Bybit API Secret:</label>
-                    <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
+                    <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" placeholder="Insira o seu API Secret" required>
                     <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Alavancagem Manual:</label>
                     <input type="number" name="leverage" value="{current_leverage}" min="1" max="100" required>
                     <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
@@ -282,7 +310,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições guardadas com sucesso!</h2>
+        <h2 style="color:#4ade80;">Definições guardadas e ligadas à Bybit!</h2>
     </body>
     </html>
     """
@@ -303,19 +331,20 @@ async def trading_loop():
                 balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
                 if 'USDT' in balance_data:
                     live_bal = float(balance_data['USDT'].get('free', 0.0) or balance_data['USDT'].get('total', 0.0) or 0.0)
-                    if initial_account_balance == 0.0 or initial_account_balance > 1000:
-                        initial_account_balance = live_bal
-                    
-                    floating_pnl_usdt = 0.0
-                    if active_position:
-                        cp = active_position.get('current_price', active_position['entry_price'])
-                        ep = active_position['entry_price']
-                        amt = active_position['amount']
-                        if active_position['side'] == 'LONG':
-                            floating_pnl_usdt = (cp - ep) * amt * (leverage / 10)
-                        else:
-                            floating_pnl_usdt = (ep - cp) * amt * (leverage / 10)
-                    current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
+                    if live_bal > 0:
+                        if initial_account_balance == 0.0:
+                            initial_account_balance = live_bal
+                        
+                        floating_pnl_usdt = 0.0
+                        if active_position:
+                            cp = active_position.get('current_price', active_position['entry_price'])
+                            ep = active_position['entry_price']
+                            amt = active_position['amount']
+                            if active_position['side'] == 'LONG':
+                                floating_pnl_usdt = (cp - ep) * amt * (leverage / 10)
+                            else:
+                                floating_pnl_usdt = (ep - cp) * amt * (leverage / 10)
+                        current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
             except Exception:
                 pass
 
