@@ -73,19 +73,18 @@ class TradingEngine:
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Trailing Stop Blindado e Cobertura de Taxas:
-        - Stop de proteção de capital em -0.15%.
-        - O trailing stop de recuo (15%) só atua de forma a garantir lucro líquido real após o pico superar +0.30%.
+        Trailing Stop Autónomo e Rigoroso:
+        - Stop de proteção contra perdas bruscas em -0.15%.
+        - Assim que o lucro atinge +0.20%, ativa o rastreio de pico e fecha se houver um recuo de 15% sobre o lucro máximo.
         """
-        # Stop de proteção contra quedas bruscas (-0.15%)
+        # Stop de emergência de capital
         if pnl_pct <= -0.0015:
-            return True
+            return True, "Stop de Proteção de Capital (-0.15%)"
 
-        # Só ativa o trailing de lucro se o trade já esteve confortavelmente positivo (> +0.30%)
-        if max_profit_reached >= 0.003:
-            # Recuo de 15% sobre o pico máximo alcançado
+        # Ativa o trailing stop logo após superar +0.20% de lucro
+        if max_profit_reached >= 0.002:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
-                return True
+                return True, "Trailing Stop Automático (Recuo de Lucro)"
 
-        return False
+        return False, None
