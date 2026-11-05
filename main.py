@@ -143,7 +143,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Gestão de Margem Adaptativa)</div>
+    <div class="brand-bar">nd-bot v8 (Lote Mínimo Bybit)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -538,24 +538,17 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS COM LOTE ADAPTATIVO AO SALDO REAL ($0.30)
+            # ABERTURA DE NOVAS ORDENS (FORÇANDO O LOTE MÍNIMO EXIGIDO PELA BYBIT)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Cálculo de lote seguro para evitar o erro 110007 (ab not enough for new order)
-                # Utiliza o saldo atual e a alavancagem para calcular a quantidade exata suportada
-                safe_balance = current_account_balance if current_account_balance > 0 else 0.3
-                allocated_margin = safe_balance * 0.95  # Usa 95% do saldo livre
-                notional_value = allocated_margin * leverage
-                raw_amount = notional_value / curr_price
-                
-                # Ajuste de lote mínimo por moeda para respeitar as regras da Bybit
+                # Atribuição estricta dos mínimos absolutos aceites pela Bybit para evitar o erro 110007
                 if 'DOGE' in best_sym:
-                    amount = max(10.0, round(raw_amount, 0))
+                    amount = 1.0   # Mínimo de contrato para DOGE em perpétuos de teste/live
                 elif 'XRP' in best_sym:
-                    amount = max(1.0, round(raw_amount, 1))
+                    amount = 0.1   # Mínimo de contrato para XRP
                 else:  # ADA
-                    amount = max(1.0, round(raw_amount, 1))
+                    amount = 1.0   # Mínimo de contrato para ADA
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
