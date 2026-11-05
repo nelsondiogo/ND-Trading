@@ -143,7 +143,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Tempo Real)</div>
+    <div class="brand-bar">nd-bot v8 (Autónomo)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -479,7 +479,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP COM GARANTIA DE LUCRO LÍQUIDO)
+            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP COM EXECUÇÃO AUTOMÁTICA NA BYBIT)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -506,12 +506,14 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
+                    should_close, close_reason = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
 
                     if should_close:
                         try:
                             clean_sym = clean_name_log(symbol)
+                            # EXECUTAR FECHO AUTOMÁTICO IMEDIATO NA CORRETORA
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
+                            
                             pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
                             initial_account_balance += pnl_usdt  # Juros compostos automáticos
@@ -520,13 +522,14 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': 'Trailing Stop (Garantia de Lucro / Proteção)'
+                                'reason': close_reason or 'Fechado Automático (Trailing Stop)'
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_sym} (Lucro Trancado)!"
+                            last_api_error = f"Fechado com sucesso em {clean_sym} ({close_reason})!"
                         except Exception as e:
-                            last_api_error = f"Erro fechar: {str(e)}"
+                            last_api_error = f"Erro fecho automático: {str(e)}"
+                            logging.error(last_api_error)
 
             # ABERTURA DE NOVAS ORDENS (TENDÊNCIA CONFIRMADA)
             if best_sig and best_sym and bot_running and not active_position:
