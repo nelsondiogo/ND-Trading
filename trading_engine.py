@@ -5,13 +5,10 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos básicos (RSI e Médias Móveis)"""
         if not ohlcv or len(ohlcv) < 14:
             return None
         
         closes = [candle[4] for candle in ohlcv]
-        
-        # Cálculo simples de RSI (14 períodos)
         gains = []
         losses = []
         for i in range(1, len(closes)):
@@ -38,12 +35,10 @@ class TradingEngine:
         }
 
     def evaluate_signal(self, indicators):
-        """Avalia se deve entrar em LONG ou SHORT com base no RSI"""
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        # Condições de entrada otimizadas para HFT (DOGE, XRP, ADA)
         if rsi < 42:
             return "LONG"
         elif rsi > 58:
@@ -53,23 +48,27 @@ class TradingEngine:
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Gestão rigorosa de saída para evitar perdas desnecessárias:
-        - Se o PnL cair mais de 0.4% a partir do lucro máximo atingido, fecha imediatamente.
-        - Se o PnL atingir -0.3% (stop loss de emergência), fecha imediatamente para proteger o capital.
+        Regra rigorosa de Trailing Stop:
+        - Só atua se o robô já tiver alcançado algum lucro (> 0%).
+        - Se o preço recuar 15% ou mais a partir do lucro máximo obtido (pico), dispara o fecho imediato.
+        - Exemplo: Se o lucro máximo foi de +1.0%, o stop é ativado se o lucro cair abaixo de +0.85% (perdeu 15% do ganho de pico).
+        - Stop de emergência absoluto se cair para -0.3% para travar perdas imprevistas.
         """
-        # Stop loss de emergência estrito (protege contra inversão brusca de tendência)
-        if pnl_pct <= -0.003: # -0.3%
+        # Stop de emergência fixo contra inversões agressivas de mercado
+        if pnl_pct <= -0.003:
             return True
 
-        # Se nunca atingiu lucro relevante e começou a descer
-        if max_profit_reached <= 0.002: # Menos de +0.2% de pico
-            if pnl_pct <= -0.002: # Fecha se recuar para -0.2%
+        # Se nunca esteve positivo o suficiente, aguarda ou protege no limiar mínimo
+        if max_profit_reached <= 0.001: # Menos de +0.1% de pico
+            if pnl_pct <= -0.0015:
                 return True
             return False
 
-        # Trailing stop dinâmico: se o lucro recuar mais de 40% em relação ao máximo alcançado
-        drawdown_limit = max_profit_reached * 0.60
-        if pnl_pct < drawdown_limit:
+        # Regra exata: se o PnL atual recuou 15% do lucro máximo atingido
+        # Limiar de recuo = max_profit_reached * (1 - 0.15) -> max_profit_reached * 0.85
+        recoil_threshold = max_profit_reached * 0.85
+        
+        if pnl_pct < recoil_threshold:
             return True
 
         return False
