@@ -72,7 +72,6 @@ async def fetch_live_balance():
                             live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or coin.get('availableToWithdraw', 0.0) or 0.0)
 
         if live_bal > 0:
-            # Inicializa o saldo base apenas na primeira leitura
             if initial_account_balance == 0.0:
                 initial_account_balance = live_bal
             
@@ -87,7 +86,6 @@ async def fetch_live_balance():
                 else:
                     floating_pnl_usdt = (ep - cp) * amt * (leverage / 10)
             
-            # Saldo atual = Saldo Inicial (composto) + Lucro Realizado + PnL Flutuante
             current_account_balance = initial_account_balance + floating_pnl_usdt
         return current_account_balance
     except Exception as e:
@@ -317,7 +315,7 @@ async def dashboard_page(request: Request):
                         <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
                             <div style="margin-bottom:6px;">
                                 <div style="font-size:20px; font-weight:900; color:#f8fafc; margin-bottom:2px;"><b>${{cleanName}}</b></div>
-                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
+                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal || 'AGUARDANDO'}}</span>
                             </div>
                             <div style="font-size:12px; color:#94a3b8;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
                         </div>
@@ -373,7 +371,7 @@ async def toggle_bot():
             pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
             pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
             total_realized_pnl += pnl_usdt
-            initial_account_balance += pnl_usdt  # Juros compostos: atualiza saldo inicial com o PnL
+            initial_account_balance += pnl_usdt  # Juros compostos aplicados
             
             closed_trades.insert(0, {
                 'symbol': symbol,
@@ -384,7 +382,7 @@ async def toggle_bot():
             
             active_position = None
             max_profit_reached = 0.0
-            last_api_error = "Robô parado manualmente. Posição fechada e juros compostos aplicados!"
+            last_api_error = "Robô parado manualmente. Posição fechada e registada no histórico!"
         except Exception as e:
             last_api_error = f"Erro ao fechar na paragem manual: {str(e)}"
             logging.error(last_api_error)
@@ -481,7 +479,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP)
+            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP DE 15% DE RECUO)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -515,21 +513,21 @@ async def trading_loop():
                             await exchange_mgr.execute_market_order(symbol, 'SELL' if side == 'LONG' else 'BUY', active_position['amount'], leverage=leverage)
                             pnl_usdt = pnl_pct * active_position['amount'] * entry_price * (leverage / 10)
                             total_realized_pnl += pnl_usdt
-                            initial_account_balance += pnl_usdt  # Juros compostos automáticos no trailing stop
+                            initial_account_balance += pnl_usdt  # Juros compostos automáticos
                             
                             closed_trades.insert(0, {
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': 'Trailing Stop (Proteção de Lucro)'
+                                'reason': 'Trailing Stop (15% recuo de lucro)'
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_name_log(symbol)} (Lucro trancado)!"
+                            last_api_error = f"Fechado com sucesso em {clean_name_log(symbol)} (Trailing Stop 15%)!"
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
-            # ABERTURA DE NOVAS ORDENS
+            # ABERTURA DE NOVAS ORDENS (LONG OU SHORT)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
