@@ -75,7 +75,8 @@ async def fetch_live_balance():
             if initial_account_balance == 0.0:
                 initial_account_balance = live_bal
             
-            leverage = int(config.load_config().get("LEVERAGE", 17))
+            current_conf = config.load_config()
+            leverage = int(current_conf.get("LEVERAGE", 17))
             floating_pnl_usdt = 0.0
             if active_position:
                 cp = active_position.get('current_price', active_position['entry_price'])
@@ -143,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Lote Mínimo Bybit)</div>
+    <div class="brand-bar">nd-bot v8 (Alavancagem Dinâmica & Tendência Real)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -154,7 +155,7 @@ async def dashboard_page(request: Request):
                 <div style="color:#94a3b8; text-align:center; padding:15px;">Nenhuma posição ativa no momento.</div>
             </div>
             <div class="card" style="border-left: 4px solid #38bdf8;">
-                <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM MANUAL: <b id="lbl-lev">{current_leverage}x</b></span><br>
+                <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM CONFIGURADA: <b id="lbl-lev" style="color:#4ade80;">{current_leverage}x</b></span><br>
                 <span style="font-size:13px;">Poder de Compra: <b id="lbl-power" style="color:#38bdf8;">0.000000 USDT</b></span>
             </div>
             <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
@@ -264,6 +265,7 @@ async def dashboard_page(request: Request):
                 document.getElementById('lbl-current').innerHTML = formatColoredValue(data.current_balance);
                 document.getElementById('lbl-realized').innerHTML = formatColoredValue(data.realized_pnl);
                 document.getElementById('lbl-power').innerHTML = formatColoredValue(data.multiplied_balance) + ' USDT';
+                document.getElementById('lbl-lev').innerText = data.leverage + 'x';
                 document.getElementById('lbl-total-lucro').innerHTML = formatColoredValue(data.realized_pnl);
                 document.getElementById('lbl-winrate').innerText = data.win_rate + '%';
                 document.getElementById('lbl-log').innerText = data.last_api_error;
@@ -409,7 +411,7 @@ async def save_settings(api_key: str = Form(...), api_secret: str = Form(...), l
     <html>
     <meta http-equiv="refresh" content="1;url=/">
     <body style="background:#0b0f19; color:white; font-family:Arial; text-align:center; padding-top:50px;">
-        <h2 style="color:#4ade80;">Definições guardadas e ligadas à Bybit!</h2>
+        <h2 style="color:#4ade80;">Definições guardadas, alavancagem atualizada e ligada à Bybit!</h2>
     </body>
     </html>
     """
@@ -538,17 +540,17 @@ async def trading_loop():
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            # ABERTURA DE NOVAS ORDENS (FORÇANDO O LOTE MÍNIMO EXIGIDO PELA BYBIT)
+            # ABERTURA DE NOVAS ORDENS COM TENDÊNCIA E LOTE MÍNIMO SEGURO
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Atribuição estricta dos mínimos absolutos aceites pela Bybit para evitar o erro 110007
+                # Atribuição dos mínimos absolutos aceites pela Bybit para evitar erros de margem
                 if 'DOGE' in best_sym:
-                    amount = 1.0   # Mínimo de contrato para DOGE em perpétuos de teste/live
+                    amount = 1.0
                 elif 'XRP' in best_sym:
-                    amount = 0.1   # Mínimo de contrato para XRP
-                else:  # ADA
-                    amount = 1.0   # Mínimo de contrato para ADA
+                    amount = 0.1
+                else:
+                    amount = 1.0
 
                 try:
                     order = await exchange_mgr.execute_market_order(best_sym, best_sig, amount, leverage=leverage)
