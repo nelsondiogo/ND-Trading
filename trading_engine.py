@@ -5,7 +5,7 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores avançados (EMA, RSI e MACD) para seguir rigorosamente a tendência"""
+        """Calcula indicadores técnicos de alta precisão (EMA, RSI e MACD)"""
         if not ohlcv or len(ohlcv) < 35:
             return None
         
@@ -32,7 +32,7 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # EMA 12 e EMA 26 (para MACD)
+        # MACD (EMA12 - EMA26)
         k12 = 2 / (12 + 1)
         k26 = 2 / (26 + 1)
         ema12 = closes[0]
@@ -43,7 +43,7 @@ class TradingEngine:
         
         macd_line = ema12 - ema26
 
-        # EMA 50 (Tendência de Médio Prazo)
+        # EMA 50
         k50 = 2 / (min(50, len(closes)) + 1)
         ema50 = closes[0]
         for price in closes[1:]:
@@ -58,9 +58,10 @@ class TradingEngine:
 
     def evaluate_signal(self, indicators):
         """
-        Gatilho infalível anti-erro:
-        - LONG: Apenas se o preço estiver acima da EMA50 E o MACD for positivo (Tendência clara de alta).
-        - SHORT: Apenas se o preço estiver abaixo da EMA50 E o MACD for negativo (Tendência clara de baixa).
+        Filtro Rigoroso Anti-Neutro:
+        - LONG: Apenas se Preço > EMA50 E MACD > 0 E RSI < 65.
+        - SHORT: Apenas se Preço < EMA50 E MACD < 0 E RSI > 35.
+        - Retorna None (Neutro) em qualquer outro cenário.
         """
         if not indicators:
             return None
@@ -70,28 +71,28 @@ class TradingEngine:
         macd = indicators["macd"]
         rsi = indicators["rsi"]
         
-        # Tendência de Alta Inquestionável
-        if close > ema50 and macd > 0 and rsi < 70:
+        # Tendência de Alta Forte
+        if close > ema50 and macd > 0 and rsi < 65:
             return "LONG"
         
-        # Tendência de Baixa Inquestionável
-        elif close < ema50 and macd < 0 and rsi > 30:
+        # Tendência de Baixa Forte
+        elif close < ema50 and macd < 0 and rsi > 35:
             return "SHORT"
         
         return None
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
         """
-        Stop de Proteção e Trailing Stop Rigoroso:
-        - Fecha imediatamente se a perda atingir -0.15%.
-        - Ativa o trailing stop mal o lucro supere +0.20%, recuando no máximo 15% a partir do pico.
+        Stop Rigoroso e Automático:
+        - Stop de Proteção imediato em -0.10%.
+        - Trailing Stop sensível: Fecha se houver recuo de 10% a partir do pico após haver lucro.
         """
-        if pnl_pct <= -0.0015:
-            return True, "Stop de Proteção de Capital (-0.15%)"
+        if pnl_pct <= -0.0010:
+            return True, "Stop Rigoroso de Proteção (-0.10%)"
 
-        if max_profit_reached >= 0.002:
-            recoil_threshold = max_profit_reached * 0.85
+        if max_profit_reached >= 0.0015:
+            recoil_threshold = max_profit_reached * 0.90
             if pnl_pct < recoil_threshold:
-                return True, "Trailing Stop Automático (Recuo de Lucro)"
+                return True, "Trailing Stop (Recuo Sensível)"
 
         return False, None
