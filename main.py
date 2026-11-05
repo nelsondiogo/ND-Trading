@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Trailing Stop Baseado em Lucro)</div>
+    <div class="brand-bar">nd-bot v8 (Trailing Stop Sensível 15% do Lucro)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
