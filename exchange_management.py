@@ -21,8 +21,7 @@ class BybitExchangeManager:
     async def set_leverage(self, symbol, leverage):
         try:
             await self.exchange.set_leverage(leverage, symbol)
-        except Exception as e:
-            # Ignora caso a alavancagem já esteja definida na corretora
+        except Exception:
             pass
 
     async def fetch_market_data(self, symbol):
@@ -40,7 +39,6 @@ class BybitExchangeManager:
             params = {}
         try:
             await self.set_leverage(symbol, leverage)
-            # Converte side para minúsculas se necessário para o CCXT ('buy' ou 'sell')
             ccxt_side = side.lower()
             if ccxt_side not in ['buy', 'sell']:
                 ccxt_side = 'buy' if side == 'LONG' else 'sell'
