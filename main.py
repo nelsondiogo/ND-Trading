@@ -34,7 +34,6 @@ last_api_error = "Sistema HFT estabilizado (DOGE, XRP, ADA)!"
 
 @app.get("/api/state")
 async def get_bot_state():
-    """Endpoint leve para atualizar a UI via JavaScript sem nunca dar F5 na página"""
     current_conf = config.load_config()
     leverage = int(current_conf.get("LEVERAGE", 17))
     multiplied = current_account_balance * leverage
@@ -60,209 +59,204 @@ async def dashboard_page(request: Request):
     current_conf = config.load_config()
     current_leverage = int(current_conf.get("LEVERAGE", 17))
     
-    html_content = f"""
-    <!DOCTYPE html>
-    <html lang="pt">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>nd-bot v8</title>
-        <style>
-            body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 80px; }}
-            .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
-            .top-header {{ display: flex; justify-content: space-between; padding: 10px 15px; background: #0b0f19; border-bottom: 1px solid #1e293b; }}
-            .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px; border-radius: 8px; text-align: center; width: 46%; }}
-            .content {{ padding: 15px; max-width: 600px; margin: auto; }}
-            .tab-content {{ display: none; }}
-            .tab-content.active {{ display: block; }}
-            .card {{ background: #161f31; border: 1px solid #2a374a; padding: 15px; border-radius: 10px; margin-bottom: 12px; }}
-            .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
-            .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; }}
-            .nav-item.active {{ color: #4ade80; font-weight: bold; }}
-            input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
-            button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }}
-        </style>
-    </head>
-    <body>
-        <div class="brand-bar">nd-bot v8 (DOGE, XRP, ADA - Sincronização em Tempo Real)</div>
-        <div class="top-header">
-            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">+0.000000</b></div>
-            <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">+0.000000</b></div>
+    html_content = f"""<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nd-bot v8</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding-bottom: 80px; }}
+        .brand-bar {{ background: #0b0f19; text-align: center; padding: 6px; border-bottom: 1px solid #1e293b; font-size: 12px; color: #4ade80; }}
+        .top-header {{ display: flex; justify-content: space-between; padding: 10px 15px; background: #0b0f19; border-bottom: 1px solid #1e293b; }}
+        .top-card {{ background: #161f31; border: 1px solid #2a374a; padding: 8px; border-radius: 8px; text-align: center; width: 46%; }}
+        .content {{ padding: 15px; max-width: 600px; margin: auto; }}
+        .tab-content {{ display: none; }}
+        .tab-content.active {{ display: block; }}
+        .card {{ background: #161f31; border: 1px solid #2a374a; padding: 15px; border-radius: 10px; margin-bottom: 12px; }}
+        .bottom-nav {{ position: fixed; bottom: 0; left: 0; width: 100%; background: #121824; display: flex; justify-content: space-around; padding: 10px 0; border-top: 1px solid #2a374a; z-index: 1000; }}
+        .nav-item {{ background: none; border: none; color: #94a3b8; font-size: 11px; cursor: pointer; display: flex; flex-direction: column; align-items: center; }}
+        .nav-item.active {{ color: #4ade80; font-weight: bold; }}
+        input[type="text"], input[type="password"], input[type="number"] {{ width: 100%; padding: 10px; margin-top: 5px; background: #0b0f19; border: 1px solid #2a374a; color: white; border-radius: 6px; box-sizing: border-box; }}
+        button[type="submit"] {{ width: 100%; margin-top: 15px; background: #0284c7; color: white; border: none; padding: 12px; border-radius: 6px; font-weight: bold; cursor: pointer; }}
+    </style>
+</head>
+<body>
+    <div class="brand-bar">nd-bot v8 (DOGE, XRP, ADA - Tempo Real)</div>
+    <div class="top-header">
+        <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">+0.000000</b></div>
+        <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">+0.000000</b></div>
+    </div>
+    <div class="content">
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="card" id="active-position-card">
+                <div style="color:#94a3b8; text-align:center; padding:15px;">Nenhuma posição ativa no momento.</div>
+            </div>
+            <div class="card" style="border-left: 4px solid #38bdf8;">
+                <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM MANUAL: <b id="lbl-lev">{current_leverage}x</b></span><br>
+                <span style="font-size:13px;">Poder de Compra: <b id="lbl-power" style="color:#38bdf8;">+0.000000 USDT</b></span>
+            </div>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
+                <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b id="lbl-status" style="color:#f87171;">PARADO</b></div>
+                <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b id="lbl-realized" style="color:#4ade80;">++0.000000</b></div>
+            </div>
+            <div class="card" style="border-left: 4px solid #4ade80; background:#16241f;">
+                <span style="font-size:11px; color:#4ade80; font-weight:bold;">ESTADO / LOG DA API:</span><br>
+                <span id="lbl-log" style="font-size:12px; color:#f8fafc; word-break: break-all;">A aguardar início...</span>
+            </div>
+            <form action="/toggle_bot" method="post">
+                <button type="submit" id="btn-toggle" style="background:#22c55e;">INICIAR ROBÔ</button>
+            </form>
         </div>
-        <div class="content">
-            <div id="tab-dashboard" class="tab-content active">
-                <div class="card" id="active-position-card">
-                    <div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>
-                </div>
-                <div class="card" style="border-left: 4px solid #38bdf8;">
-                    <span style="font-size:12px; color:#94a3b8;">ALAVANCAGEM MANUAL: <b id="lbl-lev">{current_leverage}x</b></span><br>
-                    <span style="font-size:13px;">Poder de Compra: <b id="lbl-power" style="color:#38bdf8;">+0.000000 USDT</b></span>
-                </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
-                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b id="lbl-status" style="color:#f87171;">PARADO</b></div>
-                    <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b id="lbl-realized" style="color:#4ade80;">++0.000000</b></div>
-                </div>
-                <div class="card" style="border-left: 4px solid #4ade80; background:#16241f;">
-                    <span style="font-size:11px; color:#4ade80; font-weight:bold;">ESTADO / LOG DA API:</span><br>
-                    <span id="lbl-log" style="font-size:12px; color:#f8fafc; word-break: break-all;">A aguardar início...</span>
-                </div>
-                <form action="/toggle_bot" method="post">
-                    <button type="submit" id="btn-toggle" style="background:#22c55e;">INICIAR ROBÔ</button>
+        
+        <div id="tab-mercado" class="tab-content">
+            <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (DOGE, XRP, ADA)</div>
+            <div id="mercado-container"><p style="color:#94a3b8; text-align:center;">A varrer mercado...</p></div>
+        </div>
+
+        <div id="tab-historico" class="tab-content">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
+                <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b id="lbl-total-lucro" style="color:#4ade80; font-size:15px;">+0.000000</b></div>
+                <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">WIN RATE</span><br><b id="lbl-winrate" style="color:#4ade80; font-size:15px;">0%</b></div>
+            </div>
+            <div class="card">
+                <span style="font-size:12px; color:#94a3b8; font-weight:bold; display:block; margin-bottom:8px;">REGISTO DE TRADES</span>
+                <div id="historico-container"><p style="color:#94a3b8; text-align:center;">Nenhuma operação fechada ainda.</p></div>
+            </div>
+        </div>
+
+        <div id="tab-ajustes" class="tab-content">
+            <div class="card">
+                <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração & Alavancagem</h2>
+                <form action="/save" method="post">
+                    <label style="font-size:12px; color:#94a3b8;">Bybit API Key:</label>
+                    <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
+                    <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Bybit API Secret:</label>
+                    <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
+                    <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Alavancagem Manual:</label>
+                    <input type="number" name="leverage" value="{current_leverage}" min="1" max="100" required>
+                    <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
+                        <input type="checkbox" name="is_testnet" value="true" {'checked' if current_conf['IS_TESTNET'] else ''}>
+                        <label style="font-size:13px; margin:0;">Ativar Testnet</label>
+                    </div>
+                    <button type="submit">Guardar Definições</button>
                 </form>
             </div>
-            
-            <div id="tab-mercado" class="tab-content">
-                <div style="font-size:12px; color:#94a3b8; margin-bottom:10px;">MERCADO DINÂMICO (DOGE, XRP, ADA)</div>
-                <div id="mercado-container"><p style='color:#94a3b8; text-align:center;'>A varrer mercado...</p></div>
-            </div>
-
-            <div id="tab-historico" class="tab-content">
-                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px;">
-                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">LUCRO TOTAL</span><br><b id="lbl-total-lucro" style="color:#4ade80; font-size:15px;">+0.000000</b></div>
-                    <div class="card" style="margin-bottom:0; text-align:center;"><span style="font-size:11px; color:#94a3b8;">WIN RATE</span><br><b id="lbl-winrate" style="color:#4ade80; font-size:15px;">0%</b></div>
-                </div>
-                <div class="card">
-                    <span style="font-size:12px; color:#94a3b8; font-weight:bold; display:block; margin-bottom:8px;">REGISTO DE TRADES</span>
-                    <div id="historico-container"><p style='color:#94a3b8; text-align:center;'>Nenhuma operação fechada ainda.</p></div>
-                </div>
-            </div>
-
-            <div id="tab-ajustes" class="tab-content">
-                <div class="card">
-                    <h2 style="color:#38bdf8; font-size:16px; margin-top:0;">Configuração & Alavancagem</h2>
-                    <form action="/save" method="post">
-                        <label style="font-size:12px; color:#94a3b8;">Bybit API Key:</label>
-                        <input type="text" name="api_key" value="{current_conf['BYBIT_API_KEY']}" required>
-                        <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Bybit API Secret:</label>
-                        <input type="password" name="api_secret" value="{current_conf['BYBIT_API_SECRET']}" required>
-                        <label style="font-size:12px; color:#94a3b8; margin-top:8px; display:block;">Alavancagem Manual:</label>
-                        <input type="number" name="leverage" value="{current_leverage}" min="1" max="100" required>
-                        <div style="margin-top: 12px; display: flex; align-items: center; gap: 8px;">
-                            <input type="checkbox" name="is_testnet" value="true" {{'checked' if current_conf['IS_TESTNET'] else ''}}>
-                            <label style="font-size:13px; margin:0;">Ativar Testnet</label>
-                        </div>
-                        <button type="submit">Guardar Definições</button>
-                    </form>
-                </div>
-            </div>
         </div>
+    </div>
 
-        <div class="bottom-nav">
-            <button class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">Dashboard</button>
-            <button class="nav-item" id="nav-mercado" onclick="switchTab('mercado')">Mercado</button>
-            <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">Histórico</button>
-            <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">Ajustes</button>
-        </div>
+    <div class="bottom-nav">
+        <button class="nav-item active" id="nav-dashboard" onclick="switchTab('dashboard')">Dashboard</button>
+        <button class="nav-item" id="nav-mercado" onclick="switchTab('mercado')">Mercado</button>
+        <button class="nav-item" id="nav-historico" onclick="switchTab('historico')">Histórico</button>
+        <button class="nav-item" id="nav-ajustes" onclick="switchTab('ajustes')">Ajustes</button>
+    </div>
 
-        <script>
-            function switchTab(tabId) {{
-                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-                document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-                document.getElementById('tab-' + tabId).classList.add('active');
-                document.getElementById('nav-' + tabId).classList.add('active');
-                localStorage.setItem('activeTab', tabId);
-            }}
+    <script>
+        function switchTab(tabId) {{
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tabId).classList.add('active');
+            document.getElementById('nav-' + tabId).classList.add('active');
+            localStorage.setItem('activeTab', tabId);
+        }}
 
-            window.onload = function() {{
-                const savedTab = localStorage.getItem('activeTab') || 'dashboard';
-                switchTab(savedTab);
-                setInterval(updateDashboardData, 2000); // Atualiza os dados a cada 2 segundos sem recarregar a página
-            }};
+        window.onload = function() {{
+            const savedTab = localStorage.getItem('activeTab') || 'dashboard';
+            switchTab(savedTab);
+            setInterval(updateDashboardData, 2000);
+        }};
 
-            async function updateDashboardData() {{
-                try {{
-                    const response = await fetch('/api/state');
-                    const data = await response.json();
+        async function updateDashboardData() {{
+            try {{
+                const response = await fetch('/api/state');
+                const data = await response.json();
 
-                    document.getElementById('lbl-initial').innerText = '+' + data.initial_balance.toFixed(6);
-                    document.getElementById('lbl-current').innerText = '+' + data.current_balance.toFixed(6);
-                    document.getElementById('lbl-realized').innerText = '++' + data.realized_pnl.toFixed(6);
-                    document.getElementById('lbl-power').innerText = '+' + data.multiplied_balance.toFixed(6) + ' USDT';
-                    document.getElementById('lbl-total-lucro').innerText = '+' + data.realized_pnl.toFixed(6);
-                    document.getElementById('lbl-winrate').innerText = data.win_rate + '%';
-                    document.getElementById('lbl-log').innerText = data.last_api_error;
+                document.getElementById('lbl-initial').innerText = '+' + data.initial_balance.toFixed(6);
+                document.getElementById('lbl-current').innerText = '+' + data.current_balance.toFixed(6);
+                document.getElementById('lbl-realized').innerText = '++' + data.realized_pnl.toFixed(6);
+                document.getElementById('lbl-power').innerText = '+' + data.multiplied_balance.toFixed(6) + ' USDT';
+                document.getElementById('lbl-total-lucro').innerText = '+' + data.realized_pnl.toFixed(6);
+                document.getElementById('lbl-winrate').innerText = data.win_rate + '%';
+                document.getElementById('lbl-log').innerText = data.last_api_error;
 
-                    const statusEl = document.getElementById('lbl-status');
-                    const btnToggle = document.getElementById('btn-toggle');
-                    if (data.bot_running) {{
-                        statusEl.innerText = 'OPERANDO';
-                        statusEl.style.color = '#4ade80';
-                        btnToggle.innerText = 'PARAR ROBÔ';
-                        btnToggle.style.background = '#ef4444';
-                    }} else {{
-                        statusEl.innerText = 'PARADO';
-                        statusEl.style.color = '#f87171';
-                        btnToggle.innerText = 'INICIAR ROBÔ';
-                        btnToggle.style.background = '#22c55e';
-                    }}
-
-                    // Posição Ativa
-                    const posCard = document.getElementById('active-position-card');
-                    if (data.active_position) {{
-                        const pos = data.active_position;
-                        const sideColor = pos.side === 'SHORT' ? '#f87171' : '#4ade80';
-                        posCard.innerHTML = `
-                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                                <b style="font-size:16px;">${{pos.symbol}}</b>
-                                <span style="background:${{sideColor}}22; color:${{sideColor}}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">${{pos.side}} (${{data.leverage}}x)</span>
-                            </div>
-                            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
-                                <div>Preço Atual: <b style="color:${{sideColor}};">+${{pos.current_price.toFixed(5)}}</b></div>
-                                <div>PNL N.Realiz.: <b style="color:${{sideColor}};">${{pos.pnl_unrealized >= 0 ? '+' : ''}}${{pos.pnl_unrealized.toFixed(2)}}%</b></div>
-                            </div>
-                            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
-                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">+${{pos.entry_price.toFixed(5)}}</b></div>
-                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">+${{pos.highest_price.toFixed(5)}}</b></div>
-                                <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">+${{pos.lowest_price.toFixed(5)}}</b></div>
-                            </div>
-                        `;
-                    }} else {{
-                        posCard.innerHTML = `<div style='color:#94a3b8; text-align:center; padding:15px;'>Nenhuma posição ativa no momento.</div>`;
-                    }}
-
-                    // Mercado
-                    const mercadoContainer = document.getElementById('mercado-container');
-                    let mercadoHtml = '';
-                    for (const [sym, info] of Object.entries(data.scanned_pairs)) {{
-                        const tagColor = info.signal === 'SHORT' ? '#f87171' : '#4ade80';
-                        mercadoHtml += `
-                            <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
-                                <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
-                                <b style="font-size:14px; margin-left:8px;">${{sym}}</b>
-                                <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
-                            </div>
-                        `;
-                    }}
-                    mercadoContainer.innerHTML = mercadoHtml || '<p style="color:#94a3b8; text-align:center;">A carregar mercado...</p>';
-
-                    // Histórico
-                    const histContainer = document.getElementById('historico-container');
-                    if (data.closed_trades.length === 0) {{
-                        histContainer.innerHTML = '<p style="color:#94a3b8; text-align:center;">Nenhuma operação fechada ainda.</p>';
-                    }} else {{
-                        let histHtml = '';
-                        for (const t of data.closed_trades) {{
-                            const col = t.pnl_usdt >= 0 ? '#4ade80' : '#f87171';
-                            histHtml += `
-                                <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
-                                    <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
-                                        <b>${{t.symbol}} (${{t.side}})</b>
-                                        <span style="color:${{col}}; font-weight:bold;">${{t.pnl_usdt >= 0 ? '+' : ''}}${{t.pnl_usdt.toFixed(6)}} USDT</span>
-                                    </div>
-                                    <small style="color:#94a3b8;">Fechado via Trailing Stop (15%)</small>
-                                </div>
-                            `;
-                        }}
-                        histContainer.innerHTML = histHtml;
-                    }}
-                } catch (err) {{
-                    console.error("Erro no polling da UI:", err);
+                const statusEl = document.getElementById('lbl-status');
+                const btnToggle = document.getElementById('btn-toggle');
+                if (data.bot_running) {{
+                    statusEl.innerText = 'OPERANDO';
+                    statusEl.style.color = '#4ade80';
+                    btnToggle.innerText = 'PARAR ROBÔ';
+                    btnToggle.style.background = '#ef4444';
+                }} else {{
+                    statusEl.innerText = 'PARADO';
+                    statusEl.style.color = '#f87171';
+                    btnToggle.innerText = 'INICIAR ROBÔ';
+                    btnToggle.style.background = '#22c55e';
                 }}
+
+                const posCard = document.getElementById('active-position-card');
+                if (data.active_position) {{
+                    const pos = data.active_position;
+                    const sideColor = pos.side === 'SHORT' ? '#f87171' : '#4ade80';
+                    posCard.innerHTML = `
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                            <b style="font-size:16px;">${{pos.symbol}}</b>
+                            <span style="background:${{sideColor}}22; color:${{sideColor}}; padding:2px 8px; border-radius:4px; font-size:12px; font-weight:bold;">${{pos.side}} (${{data.leverage}}x)</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:10px;">
+                            <div>Preço Atual: <b style="color:${{sideColor}};">+${{pos.current_price.toFixed(5)}}</b></div>
+                            <div>PNL N.Realiz.: <b style="color:${{sideColor}};">${{pos.pnl_unrealized >= 0 ? '+' : ''}}${{pos.pnl_unrealized.toFixed(2)}}%</b></div>
+                        </div>
+                        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:5px; font-size:11px; text-align:center; color:#94a3b8;">
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">ENTRADA<br><b style="color:#facc15;">+${{pos.entry_price.toFixed(5)}}</b></div>
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÁXIMO<br><b style="color:#4ade80;">+${{pos.highest_price.toFixed(5)}}</b></div>
+                            <div style="background:#0b0f19; padding:4px; border-radius:4px;">MÍNIMO<br><b style="color:#f87171;">+${{pos.lowest_price.toFixed(5)}}</b></div>
+                        </div>
+                    `;
+                }} else {{
+                    posCard.innerHTML = `<div style="color:#94a3b8; text-align:center; padding:15px;">Nenhuma posição ativa no momento.</div>`;
+                }}
+
+                const mercadoContainer = document.getElementById('mercado-container');
+                let mercadoHtml = '';
+                for (const [sym, info] of Object.entries(data.scanned_pairs)) {{
+                    const tagColor = info.signal === 'SHORT' ? '#f87171' : '#4ade80';
+                    mercadoHtml += `
+                        <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
+                            <span style="background:${{tagColor}}22; color:${{tagColor}}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:bold;">${{info.signal}}</span>
+                            <b style="font-size:14px; margin-left:8px;">${{sym}}</b>
+                            <div style="font-size:12px; color:#94a3b8; margin-top:4px;">Preço: ${{info.price}} | RSI: ${{info.rsi.toFixed(1)}}</div>
+                        </div>
+                    `;
+                }}
+                mercadoContainer.innerHTML = mercadoHtml || '<p style="color:#94a3b8; text-align:center;">A carregar mercado...</p>';
+
+                const histContainer = document.getElementById('historico-container');
+                if (data.closed_trades.length === 0) {{
+                    histContainer.innerHTML = '<p style="color:#94a3b8; text-align:center;">Nenhuma operação fechada ainda.</p>';
+                }} else {{
+                    let histHtml = '';
+                    for (const t of data.closed_trades) {{
+                        const col = t.pnl_usdt >= 0 ? '#4ade80' : '#f87171';
+                        histHtml += `
+                            <div style="background:#161f31; padding:12px; border-radius:8px; margin-bottom:8px; border:1px solid #2a374a;">
+                                <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px;">
+                                    <b>${{t.symbol}} (${{t.side}})</b>
+                                    <span style="color:${{col}}; font-weight:bold;">${{t.pnl_usdt >= 0 ? '+' : ''}}${{t.pnl_usdt.toFixed(6)}} USDT</span>
+                                </div>
+                                <small style="color:#94a3b8;">Fechado via Trailing Stop (15%)</small>
+                            </div>
+                        `;
+                    }}
+                    histContainer.innerHTML = histHtml;
+                }}
+            }} catch (err) {{
+                console.error("Erro no polling da UI:", err);
             }}
-        </script>
-    </body>
-    </html>
-    """
+        }}
+    </script>
+</body>
+</html>"""
     return HTMLResponse(content=html_content)
 
 @app.post("/toggle_bot", response_class=HTMLResponse)
@@ -296,7 +290,6 @@ async def trading_loop():
             current_conf = config.load_config()
             leverage = int(current_conf.get("LEVERAGE", 17))
 
-            # Sincronização de saldo real
             try:
                 balance_data = await exchange_mgr.exchange.fetch_balance({'type': 'linear'})
                 if 'USDT' in balance_data:
@@ -317,7 +310,6 @@ async def trading_loop():
             except Exception:
                 pass
 
-            # Sincronização de posições reais na Bybit
             try:
                 positions = await exchange_mgr.exchange.fetch_positions(config.PAIRS)
                 real_pos = None
@@ -351,7 +343,6 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # Varredura dos 3 pares (DOGE, XRP, ADA)
             t_start = time.time()
             tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
             results = await asyncio.gather(*tasks)
