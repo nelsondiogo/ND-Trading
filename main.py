@@ -371,7 +371,7 @@ async def toggle_bot():
             pnl_pct = (curr_price - entry_price) / entry_price if side == 'LONG' else (entry_price - curr_price) / entry_price
             pnl_usdt = pnl_pct * amount * entry_price * (leverage / 10)
             total_realized_pnl += pnl_usdt
-            initial_account_balance += pnl_usdt  # Juros compostos automáticos
+            initial_account_balance += pnl_usdt  # Juros compostos aplicados
             
             closed_trades.insert(0, {
                 'symbol': symbol,
@@ -479,7 +479,7 @@ async def trading_loop():
                     best_sig = sig
                     best_sym = symbol
 
-            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP DE 15% DE RECUO)
+            # GESTÃO DA POSIÇÃO ATIVA (TRAILING STOP E PROTEÇÃO DE CAPITAL)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
@@ -520,15 +520,15 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': 'Trailing Stop (15% recuo de lucro)'
+                                'reason': 'Trailing Stop (15% recuo de lucro / Stop de Capital)'
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com sucesso em {clean_sym} (Trailing Stop 15%)!"
+                            last_api_error = f"Fechado com sucesso em {clean_sym} (Stop de Proteção/Lucro)!"
                         except Exception as e:
                             last_api_error = f"Erro fechar: {str(e)}"
 
-            # ABERTURA DE NOVAS ORDENS COM ENTRADA CIRÚRGICA
+            # ABERTURA DE NOVAS ORDENS (TENDÊNCIA CONFIRMADA)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
