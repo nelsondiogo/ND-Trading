@@ -58,7 +58,7 @@ class TradingEngine:
 
     def evaluate_signal(self, indicators):
         """
-        Filtro Rigoroso Anti-Neutro:
+        Filtro Rigoroso para Scalping:
         - LONG: Preço > EMA50 E MACD > 0 E RSI < 65.
         - SHORT: Preço < EMA50 E MACD < 0 E RSI > 35.
         """
@@ -79,24 +79,28 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
         """
-        Regra Absoluta de Proteção e Captura de Lucro:
-        - NUNCA fecha se pnl_pct <= 0 (proibido fechar no negativo).
-        - Se estiver em LUCRO (pnl_pct > 0):
-          1. Fecha se o sinal passar a NEUTRO ou inverter (garante o lucro antes de o mercado virar).
-          2. Fecha via Trailing Stop se recuar 15% a partir do pico máximo de lucro.
+        Regras de Saída ND-SCALPING:
+        1. Proibido fechar no negativo (pnl_pct <= 0 mantém sempre aberto).
+        2. Take Profit de Scalping: Se atingir ou ultrapassar 0.005 (0.5%), fecha de imediato.
+        3. Inversão ou Neutralidade: Se estiver no lucro e o mercado mudar, fecha logo.
+        4. Trailing Stop de Lucro (15% de recuo do pico).
         """
         if pnl_pct <= 0:
             return False, None
 
-        # Se está em LUCRO e o sinal fica NEUTRO ou inverte, fecha imediatamente para garantir o lucro!
+        # Take Profit de Alta Frequência (0.5% ou superior)
+        if pnl_pct >= 0.005:
+            return True, f"Take Profit Scalping Atingido ({pnl_pct*100:.2f}%)"
+
+        # Inversão de direção ou Neutralidade com Lucro
         if active_side == 'LONG' and current_signal in [None, 'SHORT']:
-            return True, f"Saída com Lucro (Sinal mudou para {current_signal or 'NEUTRO'})"
+            return True, f"Saída por Mudança de Tendência (Sinal: {current_signal or 'NEUTRO'})"
         
         if active_side == 'SHORT' and current_signal in [None, 'LONG']:
-            return True, f"Saída com Lucro (Sinal mudou para {current_signal or 'NEUTRO'})"
+            return True, f"Saída por Mudança de Tendência (Sinal: {current_signal or 'NEUTRO'})"
 
-        # Trailing Stop por Recuo de Lucro (15% do Pico Máximo)
-        if max_profit_reached > 0.0001:
+        # Trailing Stop baseado em Recuo do Lucro Máximo (15%)
+        if max_profit_reached > 0.001:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
                 return True, "Trailing Stop (Recuo de 15% do Lucro)"
