@@ -5,8 +5,8 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula dados de velas e momentum cirúrgico para Scalping"""
-        if not ohlcv or len(ohlcv) < 20:
+        """Calcula indicadores de alta precisão e estrutura de velas para eliminar ruído"""
+        if not ohlcv or len(ohlcv) < 30:
             return None
         
         closes = [candle[4] for candle in ohlcv]
@@ -35,49 +35,52 @@ class TradingEngine:
             rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
 
-        # Análise das últimas 2 Velas para Entrada Cirúrgica (Pullback)
-        current_candle = {'open': opens[-1], 'high': highs[-1], 'low': lows[-1], 'close': closes[-1]}
-        previous_candle = {'open': opens[-2], 'high': highs[-2], 'low': lows[-2], 'close': closes[-2]}
+        # Estrutura das últimas 3 velas para filtrar ruído e confirmar momentum real
+        c1 = {'open': opens[-3], 'close': closes[-3]} # Vela antepenúltima
+        c2 = {'open': opens[-2], 'close': closes[-2]} # Vela anterior (Pullback/Correção)
+        c3 = {'open': opens[-1], 'close': closes[-1]} # Vela atual (Arranque)
 
         return {
             "rsi": rsi,
             "close": closes[-1],
-            "current": current_candle,
-            "previous": previous_candle
+            "c1": c1,
+            "c2": c2,
+            "c3": c3
         }
 
     def evaluate_signal(self, indicators):
         """
-        Entrada Cirúrgica Baseada em Velas (Aguarda correção antes de seguir a direção):
-        - LONG: A vela anterior corrigiu (ou fechou neutra/leve baixa) e a atual está a arrancar em alta com força.
-        - SHORT: A vela anterior corrigiu (ou subiu levemente) e a atual está a romper em queda.
+        Entrada Cirúrgica Anti-Ruído:
+        Exige alinhamento de corpo de velas consecutivo para evitar falsos sinais de alta volatilidade.
         """
         if not indicators:
             return None
         
         rsi = indicators["rsi"]
-        curr = indicators["current"]
-        prev = indicators["previous"]
+        c1 = indicators["c1"]
+        c2 = indicators["c2"]
+        c3 = indicators["c3"]
 
-        curr_body = curr["close"] - curr["open"]
-        prev_body = prev["close"] - prev["open"]
+        body1 = c1["close"] - c1["open"]
+        body2 = c2["close"] - c2["open"]
+        body3 = c3["close"] - c3["open"]
 
-        # Condição LONG Cirúrgica: Correção na vela anterior (prev_body <= 0 ou pequena) e arranque verde agora
-        is_long_pullback = (prev_body <= 0 or prev_body < abs(prev['close']) * 0.001) and (curr_body > 0)
-        if is_long_pullback and 40 <= rsi <= 68:
+        # LONG Cirúrgico: Vela 2 corrigiu levemente ou estabilizou, e Vela 3 rompeu com força compradora real
+        is_long_setup = (body2 <= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 > 0) and (body1 + body3 > 0)
+        if is_long_setup and 45 <= rsi <= 65:
             return "LONG"
 
-        # Condição SHORT Cirúrgica: Correção na vela anterior (prev_body >= 0) e queda agora
-        is_short_pullback = (prev_body >= 0 or prev_body > -abs(prev['close']) * 0.001) and (curr_body < 0)
-        if is_short_pullback and 32 <= rsi <= 60:
+        # SHORT Cirúrgico: Vela 2 subiu levemente, e Vela 3 rompeu com força vendedora real
+        is_short_setup = (body2 >= 0 or abs(body2) < abs(c2['close']) * 0.001) and (body3 < 0) and (body1 + body3 < 0)
+        if is_short_setup and 35 <= rsi <= 55:
             return "SHORT"
         
         return None
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída ND-SCALPING (Trava Rígida em 0.75% & Proteção Imediata):
-        1. Proibido fechar no negativo (pnl_pct <= 0 mantém aberto até recuperar).
+        Regras de Saída ND-SCALPING (Trava Rígida em 0.75% & Proteção Imediata contra Recuo):
+        1. Proibido fechar no negativo (pnl_pct <= 0 mantém aberto para recuperar).
         2. TAKE PROFIT ABSOLUTO EM 0.75%: Se o PnL alavancado atingir >= 0.75% (0.0075), fecha de imediato!
         3. MUDANÇA DE DIREÇÃO / NEUTRALIDADE: Fecha logo se o mercado virar.
         4. RECUO DE LUCRO: Se o lucro recuar do topo, fecha de imediato para não devolver ganho.
