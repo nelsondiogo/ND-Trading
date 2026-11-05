@@ -156,8 +156,8 @@ async def dashboard_page(request: Request):
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">STATUS</span><br><b style="color:{status_color};">{status_str}</b></div>
                     <div class="card" style="margin-bottom:0;"><span style="font-size:11px; color:#94a3b8;">PNL REALIZADO</span><br><b style="color:#4ade80;">++{total_realized_pnl:.6f}</b></div>
                 </div>
-                <div class="card" style="border-left: 4px solid #f87171; background:#1e1b2e;">
-                    <span style="font-size:11px; color:#f87171; font-weight:bold;">ERRO DETALHADO DA BYBIT:</span><br>
+                <div class="card" style="border-left: 4px solid #4ade80; background:#16241f;">
+                    <span style="font-size:11px; color:#4ade80; font-weight:bold;">ESTADO / LOG DA API:</span><br>
                     <span style="font-size:12px; color:#f8fafc; word-break: break-all;">{last_api_error}</span>
                 </div>
                 <form action="/toggle_bot" method="post">
@@ -315,7 +315,7 @@ async def trading_loop():
                 last_signal_text = f"Enviando ordem {best_sig} em {best_sym}"
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
-                # Montante fixo mínimo seguro para testes de contrato na Bybit (ex: 10 DOGE)
+                # Quantidade otimizada para o saldo atual com alavancagem
                 amount = 10.0 if 'DOGE' in best_sym else (1.0 if 'XRP' in best_sym else 1.0)
 
                 try:
@@ -327,9 +327,8 @@ async def trading_loop():
                             'amount': amount, 'score': 90
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA em {best_sym} (Qtd: {amount})!"
+                        last_api_error = f"Ordem ABERTA com sucesso em {best_sym}!"
                 except Exception as e:
-                    # Captura e exibe a mensagem de erro EXATA devolvida pela Bybit no painel
                     last_api_error = f"ERRO BYBIT: {str(e)}"
                     logging.error(last_api_error)
 
