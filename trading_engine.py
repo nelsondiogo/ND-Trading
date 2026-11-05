@@ -79,19 +79,24 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
         """
-        Condições de Saída Rigorosas:
-        1. Inversão ou Neutralização de Sinal: Se a tendência mudar, fecha imediatamente.
-        2. Trailing Stop de Lucro: Se estiver positivo e houver um recuo de 15% a partir do pico máximo.
+        Proteção Estrita de Saldo:
+        - NUNCA encerra ordens com PnL <= 0.
+        - Apenas se pnl_pct > 0:
+          1. Encerra se ocorrer reversão direta de sinal (ex: LONG para SHORT).
+          2. Encerra via Trailing Stop se recuar 15% a partir do lucro máximo atingido.
         """
-        # 1. Mudança de Sinal (Inversão ou Neutro)
-        if active_side == 'LONG' and current_signal != 'LONG':
-            return True, f"Inversão de Tendência (Sinal: {current_signal or 'NEUTRO'})"
-        
-        if active_side == 'SHORT' and current_signal != 'SHORT':
-            return True, f"Inversão de Tendência (Sinal: {current_signal or 'NEUTRO'})"
+        if pnl_pct <= 0:
+            return False, None
 
-        # 2. Trailing Stop Baseado em Lucro (Recuo de 15% do Pico Máximo)
-        if pnl_pct > 0 and max_profit_reached > 0.0001:
+        # Reversão Direta com Lucro
+        if active_side == 'LONG' and current_signal == 'SHORT':
+            return True, "Reversão para SHORT (Com Lucro)"
+        
+        if active_side == 'SHORT' and current_signal == 'LONG':
+            return True, "Reversão para LONG (Com Lucro)"
+
+        # Trailing Stop por Recuo de Lucro (15%)
+        if max_profit_reached > 0.0001:
             recoil_threshold = max_profit_reached * 0.85
             if pnl_pct < recoil_threshold:
                 return True, "Trailing Stop (Recuo de 15% do Lucro)"
