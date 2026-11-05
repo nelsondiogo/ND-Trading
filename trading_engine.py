@@ -24,7 +24,16 @@ class TradingEngine:
                 rs = avg_gain / avg_loss
                 rsi = 100.0 - (100.0 / (1.0 + rs))
 
-            return {'rsi': float(rsi), 'close': float(closes[-1])}
+            # Tendência de curto prazo via Média Móvel Simples (SMA 5 vs SMA 15)
+            sma_fast = np.mean(closes[-5:])
+            sma_slow = np.mean(closes[-15:])
+
+            return {
+                'rsi': float(rsi),
+                'close': float(closes[-1]),
+                'sma_fast': float(sma_fast),
+                'sma_slow': float(sma_slow)
+            }
         except Exception as e:
             logging.error(f"Erro ao calcular indicadores: {e}")
             return None
@@ -34,22 +43,27 @@ class TradingEngine:
             return "NEUTRAL"
         
         rsi = indicators.get('rsi', 50.0)
+        sma_fast = indicators.get('sma_fast', 0.0)
+        sma_slow = indicators.get('sma_slow', 0.0)
 
-        # Parâmetros otimizados para Scalping HFT (Disparo rápido)
-        if rsi < 48:
+        # Regra de Ouro: Só entra a favor da tendência real de mercado
+        if rsi > 52 and sma_fast > sma_slow:
             return "LONG"
-        elif rsi > 52:
+        elif rsi < 48 and sma_fast < sma_slow:
             return "SHORT"
         else:
-            return "LONG"  # Força entrada se o mercado estiver perto da média
+            return "NEUTRAL"
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
-        # Trava de lucro (Take Profit a 0.5% ou Trailing Stop com recuo de 25%)
-        if pnl_pct >= 0.005:  
+        # REGRA DE OURO DA SAÍDA:
+        # Se atingiu lucro positivo (ex: > 0.15%), e o preço recuar 25% desse topo -> FECHA IMEDIATAMENTE
+        if max_profit_reached > 0.0015:
+            lucro_restante = pnl_pct / max_profit_reached
+            if lucro_restante <= 0.75:  # Perdeu 25% do topo alcançado
+                return True
+
+        # Stop Loss de emergência caso a operação entre logo a perder (-0.8%)
+        if pnl_pct <= -0.008:
             return True
-        if max_profit_reached >= 0.003 and pnl_pct <= (max_profit_reached * 0.75):
-            return True
-        # Stop Loss de segurança a -1.5%
-        if pnl_pct <= -0.015:
-            return True
+
         return False
