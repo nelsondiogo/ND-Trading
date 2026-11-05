@@ -1,11 +1,10 @@
 import os
 
-# Credenciais e Definições da Bybit (Pré-definidas por padrão para leitura imediata)
-BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "cIHTUlByBnrfkEy8S")
-BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "tua_api_secret_aqui")
+# Variáveis globais para as credenciais (vazias por defeito para inserção limpa)
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET", "")
 IS_TESTNET = False
 
-# Apenas os 3 pares estritos abaixo de 1 USDT solicitados
 PAIRS = [
     'DOGE/USDT:USDT',
     'XRP/USDT:USDT',
@@ -24,6 +23,6 @@ def load_config():
 
 def save_config(api_key, api_secret, is_testnet, leverage):
     global BYBIT_API_KEY, BYBIT_API_SECRET, IS_TESTNET
-    BYBIT_API_KEY = api_key
-    BYBIT_API_SECRET = api_secret
+    BYBIT_API_KEY = api_key.strip()
+    BYBIT_API_SECRET = api_secret.strip()
     IS_TESTNET = is_testnet
