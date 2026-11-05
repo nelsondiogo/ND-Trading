@@ -79,18 +79,18 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal):
         """
-        Regras de Saída ND-SCALPING (Rigidez Máxima):
+        Regras de Saída ND-SCALPING (Blindagem Absoluta):
         1. Proibido fechar no negativo (pnl_pct <= 0 mantém sempre aberto).
-        2. TAKE PROFIT IMEDIATO: Se pnl_pct >= 0.5% (0.005), fecha de imediato sem desculpas!
+        2. TAKE PROFIT IMEDIATO: Se pnl_pct >= 0.005 (0.5%), fecha de imediato sem hesitar!
         3. Mudança de Direção / Neutralidade com Lucro: Fecha logo para não devolver ganho.
-        4. Trailing Stop de Proteção de Lucro (10% de recuo do pico máximo se passar de 0.5%).
+        4. Trailing Stop Rígido (recuo de 5% do pico máximo se já passou do alvo).
         """
         if pnl_pct <= 0:
             return False, None
 
-        # REGRA PRIMÁRIA ABSOLUTA: Atingiu ou passou 0.5% de lucro? Fecha imediatamente!
+        # REGRA ABSOLUTA DE SCALPING: Atingiu ou ultrapassou 0.5% de lucro? Fecha imediatamente!
         if pnl_pct >= 0.005:
-            return True, f"Take Profit Scalping Absoluto ({pnl_pct*100:.2f}%)"
+            return True, f"Take Profit 0.5% Atingido ({pnl_pct*100:.2f}%)"
 
         # Se mudou de direção ou ficou neutro e está no lucro, fecha para rodar o capital
         if active_side == 'LONG' and current_signal in [None, 'SHORT']:
@@ -99,10 +99,10 @@ class TradingEngine:
         if active_side == 'SHORT' and current_signal in [None, 'LONG']:
             return True, f"Saída por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
 
-        # Trailing Stop mais apertado (recuo de 10% do pico se já estiver em ganho leve)
-        if max_profit_reached > 0.002:
-            recoil_threshold = max_profit_reached * 0.90
+        # Trailing Stop Ultrarrápido (recuo de 5% do pico se já estiver em ganho)
+        if max_profit_reached > 0.003:
+            recoil_threshold = max_profit_reached * 0.95
             if pnl_pct < recoil_threshold:
-                return True, "Trailing Stop Rígido (Recuo de 10% do Lucro)"
+                return True, "Trailing Stop Rígido (Recuo do Lucro)"
 
         return False, None
