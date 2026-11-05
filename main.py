@@ -32,7 +32,7 @@ closed_trades = []
 scanned_pairs_data = {}
 scan_latency_ms = 0.0
 last_signal_text = "Nenhum sinal recente"
-last_api_error = "Sincronizado com a Bybit com sucesso!"
+last_api_error = "Sistema estabilizado e pronto!"
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
@@ -62,20 +62,21 @@ async def dashboard_page(request: Request):
                             if coin.get('coin') == 'USDT':
                                 live_bal = float(coin.get('walletBalance', 0.0) or coin.get('free', 0.0) or 0.0)
 
-                if not bot_running:
+                if initial_account_balance == 0.0:
                     initial_account_balance = live_bal
-                    current_account_balance = live_bal
-                else:
-                    floating_pnl_usdt = 0.0
-                    if active_position:
-                        curr_p = active_position.get('current_price', active_position['entry_price'])
-                        entry_p = active_position['entry_price']
-                        amt = active_position['amount']
-                        if active_position['side'] == 'LONG':
-                            floating_pnl_usdt = (curr_p - entry_p) * amt
-                        else:
-                            floating_pnl_usdt = (entry_p - curr_p) * amt
-                    current_account_balance = initial_account_balance + total_realized_pnl + floating_pnl_usdt
+
+                # O saldo ATUAL é SEMPRE atualizado em tempo real (mesmo que PARADO)
+                floating_pnl_usdt = 0.0
+                if active_position:
+                    curr_p = active_position.get('current_price', active_position['entry_price'])
+                    entry_p = active_position['entry_price']
+                    amt = active_position['amount']
+                    if active_position['side'] == 'LONG':
+                        floating_pnl_usdt = (curr_p - entry_p) * amt
+                    else:
+                        floating_pnl_usdt = (entry_p - curr_p) * amt
+                
+                current_account_balance = live_bal + total_realized_pnl + floating_pnl_usdt
         except Exception as e:
             logging.error(f"Erro ao ler saldo: {e}")
 
@@ -155,7 +156,7 @@ async def dashboard_page(request: Request):
                     <b>{t['symbol']} ({t['side']})</b>
                     <span style="color:{color}; font-weight:bold;">{t['pnl_usdt']:+.6f} USDT</span>
                 </div>
-                <small style="color:#94a3b8;">Fechado com sucesso</small>
+                <small style="color:#94a3b8;">Fechado via Trailing Stop (25%)</small>
             </div>
             """
     win_rate = int((wins / len(closed_trades)) * 100) if closed_trades else 0
@@ -300,8 +301,8 @@ async def trading_loop():
             current_conf = config.load_config()
             leverage = current_conf.get("LEVERAGE", 10)
 
-            # Sincronização direta do estado real da Bybit: verifica se a posição ainda existe na corretora
-            if active_position and bot_running:
+            # Sincronização em cada ciclo com a Bybit
+            if active_position:
                 try:
                     positions = await exchange_mgr.exchange.fetch_positions([active_position['symbol']])
                     real_pos_found = False
@@ -310,10 +311,9 @@ async def trading_loop():
                             real_pos_found = True
                             break
                     if not real_pos_found:
-                        # Se a posição foi fechada externamente na Bybit, limpa o estado local
                         active_position = None
                         max_profit_reached = 0.0
-                        last_api_error = "Posição detetada como fechada na Bybit."
+                        last_api_error = "Posição encerrada na Bybit."
                 except Exception:
                     pass
 
@@ -368,6 +368,7 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
+                    # Executa a Regra de Ouro (Trailing Stop de 25%)
                     should_close = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
 
                     if should_close and bot_running:
@@ -378,7 +379,7 @@ async def trading_loop():
                             closed_trades.insert(0, {'symbol': symbol, 'side': side, 'pnl_usdt': pnl_usdt})
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Posição fechada com sucesso em {symbol}"
+                            last_api_error = f"Trava de 25% acionada! Posição fechada em {symbol}"
                         except Exception as e:
                             last_api_error = f"Erro ao fechar: {str(e)}"
 
@@ -401,7 +402,7 @@ async def trading_loop():
                             'pnl_unrealized': 0.0
                         }
                         max_profit_reached = 0.0
-                        last_api_error = f"Ordem ABERTA com sucesso em {best_sym}!"
+                        last_api_error = f"Ordem ABERTA a favor da tendência em {best_sym} ({best_sig})!"
                 except Exception as e:
                     last_api_error = f"ERRO BYBIT: {str(e)}"
                     logging.error(last_api_error)
