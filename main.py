@@ -144,7 +144,7 @@ async def dashboard_page(request: Request):
     </style>
 </head>
 <body>
-    <div class="brand-bar">nd-bot v8 (Trailing Stop Sensível 15% do Lucro)</div>
+    <div class="brand-bar">nd-bot v8 (Saída por Inversão de Sinal & Stop Rigoroso)</div>
     <div class="top-header">
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">INICIAL</span><br><b id="lbl-initial" style="color:#4ade80;">0.000000</b></div>
         <div class="top-card"><span style="font-size:10px; color:#94a3b8;">ATUAL</span><br><b id="lbl-current" style="color:#4ade80;">0.000000</b></div>
@@ -440,6 +440,34 @@ async def trading_loop():
 
             await fetch_live_balance()
 
+            # 1. VARREDURA DO MERCADO PRIMEIRO PARA OBTER OS SINAIS ATUAIS DE TODOS OS PARES
+            t_start = time.time()
+            tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
+            results = await asyncio.gather(*tasks)
+
+            scanned_pairs_data.clear()
+            best_sig = None
+            best_sym = None
+
+            for symbol, ohlcv, current_price, _ in results:
+                if not ohlcv or not current_price:
+                    continue
+                indicators = trading_engine.calculate_indicators(ohlcv)
+                if not indicators:
+                    continue
+                sig = trading_engine.evaluate_signal(indicators)
+
+                scanned_pairs_data[symbol] = {
+                    'price': current_price,
+                    'rsi': indicators['rsi'],
+                    'signal': sig
+                }
+
+                if sig in ['LONG', 'SHORT'] and not best_sym:
+                    best_sig = sig
+                    best_sym = symbol
+
+            # 2. SINCRONIZAÇÃO DE POSIÇÕES DA CORRETORA
             try:
                 positions = await exchange_mgr.exchange.fetch_positions(config.PAIRS)
                 real_pos = None
@@ -473,18 +501,19 @@ async def trading_loop():
             except Exception as e:
                 logging.error(f"Erro posições: {e}")
 
-            # GESTÃO DA POSIÇÃO ATIVA (BUSCA TICKER EM TEMPO REAL)
+            # 3. GESTÃO DA POSIÇÃO ATIVA (AVALIAÇÃO DE SAÍDA POR SINAL OU TRAILING STOP)
             if active_position:
                 symbol = active_position['symbol']
                 entry_price = active_position['entry_price']
                 side = active_position['side']
                 
-                curr_price = None
-                try:
-                    ticker = await exchange_mgr.exchange.fetch_ticker(symbol)
-                    curr_price = ticker['last']
-                except Exception:
-                    curr_price = scanned_pairs_data.get(symbol, {}).get('price', entry_price)
+                curr_price = scanned_pairs_data.get(symbol, {}).get('price')
+                if not curr_price:
+                    try:
+                        ticker = await exchange_mgr.exchange.fetch_ticker(symbol)
+                        curr_price = ticker['last']
+                    except Exception:
+                        curr_price = entry_price
 
                 if curr_price:
                     if curr_price > active_position.get('highest_price', entry_price):
@@ -499,7 +528,12 @@ async def trading_loop():
                     if pnl_pct > max_profit_reached:
                         max_profit_reached = pnl_pct
 
-                    should_close, close_reason = trading_engine.evaluate_trailing_stop(pnl_pct, max_profit_reached)
+                    # Obtém o sinal atual do par ativo
+                    current_pair_signal = scanned_pairs_data.get(symbol, {}).get('signal') # 'LONG', 'SHORT' ou None (Neutro)
+
+                    should_close, close_reason = trading_engine.evaluate_exit_condition(
+                        pnl_pct, max_profit_reached, side, current_pair_signal
+                    )
 
                     if should_close:
                         try:
@@ -527,42 +561,16 @@ async def trading_loop():
                                 'symbol': symbol,
                                 'side': side,
                                 'pnl_usdt': pnl_usdt,
-                                'reason': close_reason or 'Trailing Stop'
+                                'reason': close_reason
                             })
                             active_position = None
                             max_profit_reached = 0.0
-                            last_api_error = f"Fechado com lucro em {clean_sym} ({close_reason})!"
+                            last_api_error = f"Fechado em {clean_sym} ({close_reason})!"
                         except Exception as e:
                             last_api_error = f"Erro fecho automático: {str(e)}"
                             logging.error(last_api_error)
 
-            t_start = time.time()
-            tasks = [exchange_mgr.fetch_market_data(pair) for pair in config.PAIRS]
-            results = await asyncio.gather(*tasks)
-
-            scanned_pairs_data.clear()
-            best_sig = None
-            best_sym = None
-
-            for symbol, ohlcv, current_price, _ in results:
-                if not ohlcv or not current_price:
-                    continue
-                indicators = trading_engine.calculate_indicators(ohlcv)
-                if not indicators:
-                    continue
-                sig = trading_engine.evaluate_signal(indicators)
-
-                scanned_pairs_data[symbol] = {
-                    'price': current_price,
-                    'rsi': indicators['rsi'],
-                    'signal': sig
-                }
-
-                if sig in ['LONG', 'SHORT'] and not best_sym:
-                    best_sig = sig
-                    best_sym = symbol
-
-            # ABERTURA DE NOVAS ORDENS (APENAS SE O BOT ESTIVER LIGADO E O SINAL FOR FORTE)
+            # 4. ABERTURA DE NOVAS ORDENS (APENAS SE O ROBÔ ESTIVER LIGADO E SEM POSIÇÃO ATIVA)
             if best_sig and best_sym and bot_running and not active_position:
                 curr_price = scanned_pairs_data[best_sym]['price']
                 
