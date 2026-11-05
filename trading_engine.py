@@ -8,7 +8,6 @@ class TradingEngine:
     def calculate_indicators(self, ohlcv):
         if not ohlcv or len(ohlcv) < 14:
             return None
-        
         try:
             closes = np.array([float(candle[4]) for candle in ohlcv])
             deltas = np.diff(closes)
@@ -34,18 +33,17 @@ class TradingEngine:
                 'sma_slow': float(sma_slow)
             }
         except Exception as e:
-            logging.error(f"Erro ao calcular indicadores: {e}")
+            logging.error(f"Erro indicadores: {e}")
             return None
 
     def evaluate_signal(self, indicators):
         if not indicators:
             return "NEUTRAL"
-        
         rsi = indicators.get('rsi', 50.0)
         sma_fast = indicators.get('sma_fast', 0.0)
         sma_slow = indicators.get('sma_slow', 0.0)
 
-        # Regra de Ouro: Nunca entrar contra a tendência
+        # Nunca entrar contra o mercado (Regra de Ouro)
         if rsi > 51.0 and sma_fast >= sma_slow:
             return "LONG"
         elif rsi < 49.0 and sma_fast <= sma_slow:
@@ -54,13 +52,10 @@ class TradingEngine:
             return "NEUTRAL"
 
     def evaluate_trailing_stop(self, pnl_pct, max_profit_reached):
-        # Regra de Ouro: Recuo rigoroso de apenas 15% do lucro máximo obtido
+        # Trailing Stop rigoroso de 15% de recuo do pico de lucro
         if max_profit_reached > 0.0008:
-            if pnl_pct <= (max_profit_reached * 0.85):  # Perdeu 15% do topo alcançado
+            if pnl_pct <= (max_profit_reached * 0.85):
                 return True
-
-        # Stop loss de segurança estrito (-0.5%)
         if pnl_pct <= -0.005:
             return True
-
         return False
