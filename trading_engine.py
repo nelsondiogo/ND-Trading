@@ -7,7 +7,6 @@ class TradingEngine:
         self.peak_price = 0.0
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores técnicos de alta frequência para scalping"""
         if not ohlcv or len(ohlcv) < 14:
             return {"close": 0.0, "rsi": 50.0, "high": 0.0, "low": 0.0}
         
@@ -31,7 +30,6 @@ class TradingEngine:
         }
 
     def evaluate_signal(self, indicators):
-        """Avalia sinais de entrada institucionais para Long ou Short"""
         rsi = indicators["rsi"]
         if rsi < 35:
             return "LONG"
@@ -40,12 +38,6 @@ class TradingEngine:
         return None
 
     def manage_trailing_stop(self, position, current_price):
-        """
-        Mecanismo Trailing Stop Ratchet:
-        - Segue o lucro após atingir 0.5%
-        - Trava móvel fixada no cume do preço máximo
-        - Encerra no Take Profit de 4.5% ou Stop Loss de 1.2%
-        """
         side = position["side"]
         entry = position["entry"]
         
