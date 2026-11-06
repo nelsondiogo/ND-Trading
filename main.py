@@ -23,14 +23,8 @@ bot_state = {
     "log": "Aguardando chaves API..."
 }
 
-PAIRS = [
-    'ADA/USDT:USDT',
-    'TRX/USDT:USDT',
-    'NEAR/USDT:USDT',
-    'LTC/USDT:USDT',
-    'XRP/USDT:USDT',
-    'DOGE/USDT:USDT'
-]
+# Pares base de scalping
+PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT', 'XRP/USDT', 'DOGE/USDT']
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -301,7 +295,7 @@ def settings():
     except ValueError:
         pass
     
-    # TESTE SÍNCRONO IMEDIATO AO GRAVAR (Descobre o erro ou sucesso na hora)
+    # Teste imediato e resolução síncrona
     try:
         temp_ex = ccxt.bybit({
             'apiKey': bot_state["api_key"],
@@ -326,10 +320,48 @@ def settings():
         bot_state["balance"] = test_total
         if bot_state["initial_balance"] == 0.0:
             bot_state["initial_balance"] = test_total
+
+        # Carrega o mercado imediatamente ao guardar
+        market_list = []
+        for base_pair in PAIRS:
+            # Encontra o símbolo correto carregado pela corretora
+            symbol = base_pair
+            if symbol not in temp_ex.markets:
+                if f"{base_pair}:USDT" in temp_ex.markets:
+                    symbol = f"{base_pair}:USDT"
             
-        bot_state["log"] = f"Sucesso! Conectado à Bybit UTA. Saldo: {test_total:.4f} USDT"
+            try:
+                ticker = temp_ex.fetch_ticker(symbol)
+                price = ticker.get('last', 0.0)
+                ohlcv = temp_ex.fetch_ohlcv(symbol, timeframe='1m', limit=20)
+                if ohlcv and len(ohlcv) >= 14:
+                    closes = [candle[4] for candle in ohlcv]
+                    gains, losses = 0.0, 0.0
+                    for i in range(1, len(closes)):
+                        diff = closes[i] - closes[i-1]
+                        if diff > 0: gains += diff
+                        else: losses -= diff
+                    rs = (gains / 14) / ((losses / 14) if losses != 0 else 1)
+                    rsi = 100 - (100 / (1 + rs))
+                else:
+                    rsi = 50.0
+
+                trend = "LONG" if rsi < 35 else ("SHORT" if rsi > 65 else "NEUTRO")
+                market_list.append({
+                    "pair": base_pair.split('/')[0],
+                    "price": price,
+                    "rsi": rsi,
+                    "trend": trend
+                })
+            except Exception as sub_ex:
+                logging.error(f"Erro ao carregar par {symbol}: {sub_ex}")
+
+        if market_list:
+            bot_state["market_data"] = market_list
+
+        bot_state["log"] = f"Sucesso! Saldo: {test_total:.4f} USDT | Ativos: {len(market_list)}"
     except Exception as err:
-        bot_state["log"] = f"Falha na API Bybit: {str(err)[:80]}"
+        bot_state["log"] = f"Falha na API Bybit: {str(err)[:85]}"
 
     return redirect(url_for('index'))
 
@@ -378,12 +410,17 @@ def background_loop():
                     bot_state["balance"] = total
 
                 market_list = []
-                for pair in PAIRS:
+                for base_pair in PAIRS:
+                    symbol = base_pair
+                    if symbol not in exchange.markets:
+                        if f"{base_pair}:USDT" in exchange.markets:
+                            symbol = f"{base_pair}:USDT"
+                    
                     try:
-                        ticker = exchange.fetch_ticker(pair)
+                        ticker = exchange.fetch_ticker(symbol)
                         price = ticker.get('last', 0.0)
                         
-                        ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=20)
+                        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=20)
                         if ohlcv and len(ohlcv) >= 14:
                             closes = [candle[4] for candle in ohlcv]
                             gains, losses = 0.0, 0.0
@@ -399,13 +436,13 @@ def background_loop():
                         trend = "LONG" if rsi < 35 else ("SHORT" if rsi > 65 else "NEUTRO")
 
                         market_list.append({
-                            "pair": pair.split('/')[0],
+                            "pair": base_pair.split('/')[0],
                             "price": price,
                             "rsi": rsi,
                             "trend": trend
                         })
                     except Exception as ex:
-                        logging.error(f"Erro no par {pair}: {ex}")
+                        logging.error(f"Erro no par {symbol}: {ex}")
 
                 if market_list:
                     bot_state["market_data"] = market_list
@@ -413,7 +450,6 @@ def background_loop():
         except Exception as e:
             err_msg = str(e)
             logging.error(f"Erro Bybit UTA Loop: {err_msg}")
-            # Mantém o log visível apenas se houver um erro crítico recorrente
         
         time.sleep(10)
 
