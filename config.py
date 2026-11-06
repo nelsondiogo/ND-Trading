@@ -7,9 +7,8 @@ PAIRS = [
     'LTC/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2
+SCAN_INTERVAL = 1  # Alta frequência para máxima velocidade de entrada
 
-# Variáveis globais em memória para persistência imediata no runtime
 _config_store = {
     "BYBIT_API_KEY": os.environ.get("BYBIT_API_KEY", ""),
     "BYBIT_API_SECRET": os.environ.get("BYBIT_API_SECRET", ""),
