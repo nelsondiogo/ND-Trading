@@ -2,7 +2,7 @@ import time
 import threading
 import logging
 import ccxt
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, redirect, url_for
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -19,10 +19,7 @@ bot_state = {
     "realized_pnl": 0.0,
     "active_position": None,
     "market_data": [],
-    "history": [
-        {"pair": "ADA", "side": "LONG", "pnl_usdt": 0.0012, "pnl_pct": 0.93, "reason": "Trailing Stop Absoluto"},
-        {"pair": "ALGO", "side": "SHORT", "pnl_usdt": -0.0003, "pnl_pct": -1.28, "reason": "Stop Loss Técnico"}
-    ],
+    "history": [],  # Começa limpo, sem dados falsos
     "log": "Insira as chaves API na aba Ajustes para iniciar."
 }
 
@@ -179,9 +176,11 @@ HTML_TEMPLATE = """
                 {% set pos_count = namespace(val=0) %}
                 {% set neg_count = namespace(val=0) %}
                 {% set total_usdt = namespace(val=0.0) %}
+                {% set total_pct = namespace(val=0.0) %}
                 
                 {% for h in history %}
                     {% set total_usdt.val = total_usdt.val + h.pnl_usdt %}
+                    {% set total_pct.val = total_pct.val + h.pnl_pct %}
                     {% if h.pnl_usdt >= 0 %}
                         {% set pos_count.val = pos_count.val + 1 %}
                     {% else %}
@@ -190,8 +189,9 @@ HTML_TEMPLATE = """
                 {% endfor %}
 
                 <p>Total de Operações: <b>{{ total_trades }}</b></p>
-                <p>Operações Positivas: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Negativas: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
-                <p>Resultado Geral (USDT): <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "%.4f"|format(total_usdt.val) }} USDT</b></p>
+                <p>Positivas: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Negativas: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
+                <p>Resultado Geral (USDT): <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b></p>
+                <p>Resultado Geral (%): <b style="color: {{ '#4ade80' if total_pct.val >= 0 else '#f87171' }}">{{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%</b></p>
             </div>
 
             <div class="card">
@@ -281,17 +281,17 @@ def settings():
         pass
     
     bot_state["log"] = "Definições e alavancagem atualizadas com sucesso."
-    return index()
+    return redirect(url_for('index'))  # Redireciona corretamente para evitar o erro de página em branco
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
         bot_state["log"] = "Erro: Insira as chaves API nos Ajustes primeiro!"
-        return index()
+        return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
     bot_state["log"] = "ND-SCALPING Ativo e ligado à corretora." if bot_state["running"] else "Robô parado manualmente."
-    return index()
+    return redirect(url_for('index'))
 
 def background_loop():
     while True:
@@ -304,7 +304,7 @@ def background_loop():
                     'options': {'defaultType': 'swap'}
                 })
                 
-                # Ler saldo real da Bybit
+                # Ler saldo real da Bybit apenas se as chaves estiverem presentes
                 bal = exchange.fetch_balance()
                 total = float(bal.get('total', {}).get('USDT', 0.0))
                 if total > 0:
