@@ -1,18 +1,14 @@
 import os
 
-# Lista expandida para 8 pares leves e de baixo ruído
+# Apenas os 4 pares de elite com melhor performance histórica e menor ruído
 PAIRS = [
     'ADA/USDT:USDT',
     'TRX/USDT:USDT',
     'NEAR/USDT:USDT',
-    'LTC/USDT:USDT',
-    'POL/USDT:USDT',
-    'ALGO/USDT:USDT',
-    'VET/USDT:USDT',
-    'XLM/USDT:USDT'
+    'LTC/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2  # Varredura de alta frequência (2 segundos)
+SCAN_INTERVAL = 2  # Varredura de alta frequência
 
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
