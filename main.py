@@ -13,7 +13,7 @@ bot_state = {
     "api_key": "",
     "api_secret": "",
     "is_testnet": False,
-    "leverage": 17,
+    "leverage": 18,
     "initial_balance": 0.0,
     "balance": 0.0,
     "realized_pnl": 0.0,
@@ -297,7 +297,6 @@ def fetch_market_and_balance():
         })
         exchange.load_markets()
         
-        # Leitura de Saldo UTA V5
         bal = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
         if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
@@ -318,7 +317,6 @@ def fetch_market_and_balance():
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
 
-        # Leitura de Mercado Multitimeframe (5m e 15m)
         market_list = []
         for base_pair in PAIRS:
             symbol = base_pair
@@ -340,9 +338,10 @@ def fetch_market_and_balance():
                 closes_15m = [c[4] for c in ohlcv_15m]
                 rsi_15m = calculate_rsi(closes_15m)
 
-                if rsi_5m < 35 and rsi_15m < 45:
+                # Filtro dinâmico e rápido (baseado primariamente em 5m, com suporte de 15m)
+                if rsi_5m < 38:
                     trend = "LONG"
-                elif rsi_5m > 65 and rsi_15m > 55:
+                elif rsi_5m > 62:
                     trend = "SHORT"
                 else:
                     trend = "NEUTRO"
@@ -366,7 +365,6 @@ def fetch_market_and_balance():
 
 @app.route('/')
 def index():
-    # Força a leitura imediata ao carregar a página se houver chaves
     if bot_state["api_key"] and bot_state["api_secret"]:
         fetch_market_and_balance()
         
@@ -398,11 +396,10 @@ def settings():
         bot_state["api_secret"] = secret
         
     try:
-        bot_state["leverage"] = int(request.form.get("leverage", 17))
+        bot_state["leverage"] = int(request.form.get("leverage", 18))
     except ValueError:
         pass
     
-    # Testa e lê de imediato ao guardar
     fetch_market_and_balance()
     bot_state["log"] = "Definições guardadas. Sincronizado com a Bybit."
     return redirect(url_for('index'))
@@ -423,17 +420,22 @@ def background_loop():
             if bot_state["api_key"] and bot_state["api_secret"]:
                 fetch_market_and_balance()
                 
-                # Gestão de Posição e Muralha Trailing Stop
+                exchange = ccxt.bybit({
+                    'apiKey': bot_state["api_key"],
+                    'secret': bot_state["api_secret"],
+                    'enableRateLimit': True,
+                    'options': {'defaultType': 'linear'}
+                })
+                exchange.load_markets()
+                
+                # Configurar alavancagem se necessário
+                try:
+                    exchange.set_leverage(bot_state["leverage"], 'ADA/USDT:USDT')
+                except Exception:
+                    pass
+
+                pos = bot_state["active_position"]
                 if bot_state["running"]:
-                    exchange = ccxt.bybit({
-                        'apiKey': bot_state["api_key"],
-                        'secret': bot_state["api_secret"],
-                        'enableRateLimit': True,
-                        'options': {'defaultType': 'linear'}
-                    })
-                    exchange.load_markets()
-                    
-                    pos = bot_state["active_position"]
                     if pos:
                         symbol = pos["symbol"]
                         ticker = exchange.fetch_ticker(symbol)
@@ -448,6 +450,7 @@ def background_loop():
                         
                         pos["pnl"] = pnl_pct * 100.0
 
+                        # Ativação da Muralha Trailing (+0.5%)
                         if pnl_pct >= TRAILING_ACTIVATE_PCT:
                             if not pos["trailing_active"]:
                                 pos["trailing_active"] = True
@@ -460,8 +463,10 @@ def background_loop():
                             elif side == "SHORT" and current_price < pos["highest_price"]:
                                 pos["highest_price"] = current_price
 
+                            # Recuo rigoroso
                             if side == "LONG" and current_price < pos["highest_price"]:
-                                bot_state["log"] = f"Muralha rigorosa acionada! Fechando {pos['pair']} por recuo."
+                                exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
+                                bot_state["log"] = f"Muralha rigorosa! Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -470,7 +475,8 @@ def background_loop():
                                 bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                                 bot_state["active_position"] = None
                             elif side == "SHORT" and current_price > pos["highest_price"]:
-                                bot_state["log"] = f"Muralha rigorosa acionada! Fechando {pos['pair']} por recuo."
+                                exchange.create_market_order(symbol, 'buy' if side=='SHORT' else 'sell', pos['amount'])
+                                bot_state["log"] = f"Muralha rigorosa! Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -480,6 +486,7 @@ def background_loop():
                                 bot_state["active_position"] = None
 
                         elif pnl_pct >= TAKE_PROFIT_PCT:
+                            exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
                             bot_state["log"] = f"Take Profit (+4.5%) atingido em {pos['pair']}!"
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
@@ -490,6 +497,7 @@ def background_loop():
                             bot_state["active_position"] = None
 
                         elif pnl_pct <= -STOP_LOSS_PCT:
+                            exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
                             bot_state["log"] = f"Stop Loss (-1.2%) acionado em {pos['pair']}."
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
@@ -499,25 +507,39 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
                     else:
+                        # Procurar sinal e abrir ordem real na corretora
                         for item in bot_state["market_data"]:
                             if item["trend"] in ["LONG", "SHORT"]:
-                                bot_state["active_position"] = {
-                                    "pair": item["pair"],
-                                    "symbol": item["symbol"],
-                                    "side": item["trend"],
-                                    "entry": item["price"],
-                                    "highest_price": item["price"],
-                                    "pnl": 0.0,
-                                    "trailing_active": False
-                                }
-                                bot_state["log"] = f"Posição aberta: {item['pair']} ({item['trend']}) em {item['price']}"
-                                break
+                                symbol = item["symbol"]
+                                side = 'buy' if item["trend"] == 'LONG' else 'sell'
+                                
+                                # Calcular quantidade baseada no saldo disponível e alavancagem
+                                notional = bot_state["balance"] * bot_state["leverage"] * 0.95 # 95% do poder
+                                amount = notional / item["price"]
+                                
+                                try:
+                                    order = exchange.create_market_order(symbol, side, amount)
+                                    execution_price = order.get('average', item["price"])
+                                    
+                                    bot_state["active_position"] = {
+                                        "pair": item["pair"],
+                                        "symbol": symbol,
+                                        "side": item["trend"],
+                                        "entry": execution_price,
+                                        "amount": amount,
+                                        "highest_price": execution_price,
+                                        "pnl": 0.0,
+                                        "trailing_active": False
+                                    }
+                                    bot_state["log"] = f"Ordem real aberta: {item['pair']} ({item['trend']}) a {execution_price}"
+                                    break
+                                except Exception as ord_err:
+                                    bot_state["log"] = f"Erro ao abrir ordem: {str(ord_err)[:50]}"
 
         except Exception as e:
-            err_msg = str(e)
-            logging.error(f"Erro crítico no background_loop: {err_msg}")
+            logging.error(f"Erro crítico no background_loop: {e}")
         
-        time.sleep(5)
+        time.sleep(3)
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
