@@ -18,7 +18,7 @@ bot_state = {
     "initial_balance": 0.2548,
     "realized_pnl": 0.0,
     "active_position": None,
-    "log_message": "ND-SCALPING v8.5 Limpo e Operacional.",
+    "log_message": "ND-SCALPING v8.5 Operacional.",
     "trades_history": []
 }
 
@@ -43,10 +43,15 @@ def get_exchange_client():
 @app.route('/')
 def index():
     return jsonify({
-        "bot": "ND-SCALPING",
+        "bot": "ND-SCALPING v8.5",
         "status": "Online",
         "running": bot_state["running"],
-        "configured": are_keys_configured()
+        "configured": are_keys_configured(),
+        "endpoints": {
+            "status": "/api/status",
+            "toggle": "/api/toggle (POST)",
+            "settings": "/api/settings (POST com api_key e api_secret)"
+        }
     })
 
 @app.route('/api/status')
@@ -59,7 +64,7 @@ def status():
             "balance": 0.0,
             "market": [],
             "active_position": None,
-            "log": "Aguardando chaves API."
+            "log": "Aguardando inserção de chaves em /api/settings."
         })
 
     exchange = get_exchange_client()
@@ -104,20 +109,31 @@ def status():
 @app.route('/api/toggle', methods=['POST'])
 def toggle_bot():
     if not are_keys_configured():
-        return jsonify({"error": "Configure as chaves API primeiro."}), 400
+        return jsonify({"error": "Configure as chaves API primeiro através de /api/settings."}), 400
     bot_state["running"] = not bot_state["running"]
-    return jsonify({"running": bot_state["running"]})
+    bot_state["log_message"] = "ND-SCALPING Ativo." if bot_state["running"] else "Robô parado."
+    return jsonify({"running": bot_state["running"], "log": bot_state["log_message"]})
 
 @app.route('/api/settings', methods=['POST'])
 def update_settings():
-    data = request.json
-    save_config(
-        api_key=data.get("api_key", ""),
-        api_secret=data.get("api_secret", ""),
-        is_testnet=False,
-        leverage=int(data.get("leverage", 17))
-    )
-    return jsonify({"status": "success", "message": "Chaves guardadas."})
+    """Recebe as chaves API enviadas pelo utilizador"""
+    data = request.json or request.form
+    api_key = data.get("api_key", "")
+    api_secret = data.get("api_secret", "")
+    is_testnet = data.get("is_testnet", False)
+    leverage = int(data.get("leverage", 17))
+
+    if not api_key or not api_secret:
+        return jsonify({"status": "error", "message": "API Key e API Secret são obrigatórias."}), 400
+
+    save_config(api_key, api_secret, is_testnet, leverage)
+    bot_state["log_message"] = "Chaves API configuradas com sucesso!"
+    
+    return jsonify({
+        "status": "success",
+        "message": "Chaves da Bybit guardadas com sucesso. O robô já está pronto para arrancar.",
+        "configured": are_keys_configured()
+    })
 
 def background_trading_loop():
     while True:
@@ -138,9 +154,10 @@ def background_trading_loop():
                                 "side": signal,
                                 "entry": current_price
                             }
+                            bot_state["log_message"] = f"Posição aberta em {pair.split('/')[0]} ({signal})."
                             break
         except Exception as e:
-            logging.error(f-f"Erro no loop: {e}")
+            logging.error(f"Erro no loop de trading: {e}")
         time.sleep(1)
 
 if __name__ == '__main__':
