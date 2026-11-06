@@ -20,14 +20,14 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "history": [],
-    "log": "Sistema inicializado. Insira as chaves em Ajustes."
+    "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
 PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
 
-TAKE_PROFIT_PCT = 0.045     # 4.5%
-STOP_LOSS_PCT = 0.012       # 1.2%
-TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
+TAKE_PROFIT_PCT = 0.045       # 4.5%
+STOP_LOSS_PCT = 0.012         # 1.2%
+TRAILING_ACTIVATE_PCT = 0.005 # 0.5% para ativar a muralha
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -345,7 +345,7 @@ def background_loop():
                 
                 exchange.load_markets()
                 
-                # Leitura robusta do saldo UTA V5
+                # Leitura de saldo UTA V5
                 bal = exchange.fetch_balance({'type': 'unified'})
                 total = 0.0
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
@@ -409,7 +409,7 @@ def background_loop():
                 if market_list:
                     bot_state["market_data"] = market_list
 
-                # Gestão de Posição Ativa e Muralha Trailing Stop
+                # Gestão de Posição e Muralha Trailing Stop
                 if bot_state["running"]:
                     pos = bot_state["active_position"]
                     if pos:
