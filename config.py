@@ -29,6 +29,9 @@ def load_config():
     is_testnet = settings.get("is_testnet", os.environ.get("IS_TESTNET", "False").lower() in ["true", "1"])
     leverage = int(settings.get("leverage", LEVERAGE))
 
+    # Verifica se as chaves são válidas (não vazias e diferentes de placeholders)
+    has_keys = bool(api_key and api_secret and "SUA_" not in api_key)
+
     return {
         "BYBIT_API_KEY": api_key,
         "BYBIT_API_SECRET": api_secret,
@@ -36,7 +39,7 @@ def load_config():
         "LEVERAGE": leverage,
         "take_profit": TAKE_PROFIT_PCT,
         "stop_loss": STOP_LOSS_PCT,
-        "configured": bool(api_key and api_secret)
+        "configured": has_keys
     }
 
 def save_config(api_key, api_secret, is_testnet=False, leverage=17):
