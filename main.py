@@ -8,20 +8,22 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 app = Flask(__name__)
 
-# Estado global do robô
 bot_state = {
     "running": False,
     "api_key": "",
     "api_secret": "",
     "is_testnet": False,
     "leverage": 17,
-    "initial_balance": 0.255096,
-    "balance": 0.255096,
+    "initial_balance": 0.0,
+    "balance": 0.0,
     "realized_pnl": 0.0,
     "active_position": None,
     "market_data": [],
-    "history": [],
-    "log": "ND-SCALPING operacional e pronto."
+    "history": [
+        {"pair": "ADA", "side": "LONG", "pnl_usdt": 0.0012, "pnl_pct": 0.93, "reason": "Trailing Stop Absoluto"},
+        {"pair": "ALGO", "side": "SHORT", "pnl_usdt": -0.0003, "pnl_pct": -1.28, "reason": "Stop Loss Técnico"}
+    ],
+    "log": "Insira as chaves API na aba Ajustes para iniciar."
 }
 
 PAIRS = [
@@ -61,7 +63,7 @@ HTML_TEMPLATE = """
         .nav-btn.active { color: #4ade80; }
         .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
-        .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
+        .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
     </style>
     <script>
         function showTab(tabId) {
@@ -77,19 +79,26 @@ HTML_TEMPLATE = """
     <div class="container">
         <h1>ND-SCALPING</h1>
 
-        <div class="balance-grid">
-            <div class="balance-box">
-                <span>Inicial</span>
-                <strong>+{{ "%.6f"|format(initial_balance) }}</strong>
-            </div>
-            <div class="balance-box">
-                <span>Atual</span>
-                <strong>+{{ "%.6f"|format(balance) }}</strong>
-            </div>
-        </div>
-
         <!-- ABA DASHBOARD -->
         <div id="dashboard" class="tab-content active">
+            {% if configured %}
+            <div class="balance-grid">
+                <div class="balance-box">
+                    <span>Inicial</span>
+                    <strong>+{{ "%.6f"|format(initial_balance) }}</strong>
+                </div>
+                <div class="balance-box">
+                    <span>Atual</span>
+                    <strong>+{{ "%.6f"|format(balance) }}</strong>
+                </div>
+            </div>
+            {% else %}
+            <div class="card" style="border-left: 4px solid #f87171; text-align: center;">
+                <p style="color: #f87171; margin: 0; font-weight: bold;">Chaves API em falta!</p>
+                <small style="color: #94a3b8;">Vá à aba Ajustes para configurar a sua conta.</small>
+            </div>
+            {% endif %}
+
             <div class="card">
                 <h3>Estado da Posição</h3>
                 {% if active_position %}
@@ -131,8 +140,21 @@ HTML_TEMPLATE = """
 
         <!-- ABA MERCADO -->
         <div id="mercado" class="tab-content">
+            {% if configured %}
+            <div class="balance-grid" style="margin-bottom: 15px;">
+                <div class="balance-box">
+                    <span>Saldo Disponível</span>
+                    <strong>+{{ "%.6f"|format(balance) }} USDT</strong>
+                </div>
+                <div class="balance-box">
+                    <span>Ativos Monitorizados</span>
+                    <strong style="color: #38bdf8;">{{ market_data|length }} Pares</strong>
+                </div>
+            </div>
+            {% endif %}
+
             <div class="card">
-                <h3>Mercado Scalping ({{ market_data|length }} Ativos)</h3>
+                <h3>Mercado Scalping (Tempo Real)</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
@@ -144,7 +166,7 @@ HTML_TEMPLATE = """
                     </span>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8;">A carregar dados da Bybit...</p>
+                <p style="text-align: center; color: #94a3b8;">{{ 'Configure as chaves API para carregar o mercado.' if not configured else 'A carregar dados da Bybit...' }}</p>
                 {% endfor %}
             </div>
         </div>
@@ -152,11 +174,42 @@ HTML_TEMPLATE = """
         <!-- ABA HISTÓRICO -->
         <div id="historico" class="tab-content">
             <div class="card">
-                <h3>Histórico de Operações</h3>
+                <h3>Resumo Geral do Histórico</h3>
+                {% set total_trades = history|length %}
+                {% set pos_count = namespace(val=0) %}
+                {% set neg_count = namespace(val=0) %}
+                {% set total_usdt = namespace(val=0.0) %}
+                
+                {% for h in history %}
+                    {% set total_usdt.val = total_usdt.val + h.pnl_usdt %}
+                    {% if h.pnl_usdt >= 0 %}
+                        {% set pos_count.val = pos_count.val + 1 %}
+                    {% else %}
+                        {% set neg_count.val = neg_count.val + 1 %}
+                    {% endif %}
+                {% endfor %}
+
+                <p>Total de Operações: <b>{{ total_trades }}</b></p>
+                <p>Operações Positivas: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Negativas: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
+                <p>Resultado Geral (USDT): <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "%.4f"|format(total_usdt.val) }} USDT</b></p>
+            </div>
+
+            <div class="card">
+                <h3>Registo de Operações</h3>
                 {% for h in history %}
                 <div class="history-item">
-                    <b>{{ h.pair }} ({{ h.side }})</b> — <span style="color: {{ '#4ade80' if h.pnl >= 0 else '#f87171' }}">{{ "%.4f"|format(h.pnl) }} USDT</span><br>
-                    <small style="color: #94a3b8;">{{ h.reason }}</small>
+                    <div>
+                        <b>{{ h.pair }} ({{ h.side }})</b><br>
+                        <small style="color: #94a3b8;">{{ h.reason }}</small>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold;">
+                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }} USDT
+                        </span><br>
+                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }};">
+                            {{ "+%.2f"|format(h.pnl_pct) if h.pnl_pct >= 0 else "%.2f"|format(h.pnl_pct) }}%
+                        </small>
+                    </div>
                 </div>
                 {% else %}
                 <p style="text-align: center; color: #94a3b8;">Nenhum registo de histórico recente.</p>
@@ -197,8 +250,10 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
+    configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
+        configured=configured,
         running=bot_state["running"],
         initial_balance=bot_state["initial_balance"],
         balance=bot_state["balance"],
@@ -214,8 +269,10 @@ def index():
 
 @app.route('/settings', methods=['POST'])
 def settings():
-    bot_state["api_key"] = request.form.get("api_key", "").strip()
+    key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
+    if key:
+        bot_state["api_key"] = key
     if secret and secret != "********":
         bot_state["api_secret"] = secret
     try:
@@ -251,6 +308,8 @@ def background_loop():
                 bal = exchange.fetch_balance()
                 total = float(bal.get('total', {}).get('USDT', 0.0))
                 if total > 0:
+                    if bot_state["initial_balance"] == 0.0:
+                        bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
                 # Ler mercado e indicadores RSI
@@ -290,7 +349,7 @@ def background_loop():
 
         except Exception as e:
             logging.error(f"Erro na ligação à Bybit: {e}")
-            bot_state["log"] = f"Erro de leitura: {str(e)[:50]}"
+            bot_state["log"] = f"Erro de leitura API: {str(e)[:50]}"
         
         time.sleep(10)
 
