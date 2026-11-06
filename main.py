@@ -1,146 +1,133 @@
 import time
 import threading
 import logging
-from flask import Flask, request, jsonify
-from config import load_config, save_config, PAIRS, are_keys_configured
-from exchange import get_exchange_client
-from trading_engine import TradingEngine
+import ccxt
+from flask import Flask, render_template_string, request, jsonify
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 app = Flask(__name__)
-engine = TradingEngine(load_config())
 
+# Estado do Robô
 bot_state = {
     "running": False,
-    "balance": 0.2548,
+    "api_key": "",
+    "api_secret": "",
+    "balance": 0.0,
     "realized_pnl": 0.0,
     "active_position": None,
-    "log_message": "ND-SCALPING Operacional.",
-    "trades_history": []
+    "log": "Robô pronto a iniciar.",
+    "history": []
 }
+
+PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'NEAR/USDT:USDT', 'LTC/USDT:USDT']
+
+# Interface Visual em HTML integrada para facilitar o uso no telemóvel/PC
+HTML_PAGE = """
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ND-SCALPING Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
+        hh1, h2 { color: #38bdf8; text-align: center; }
+        .card { background: #334155; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+        input, button { width: 100%%; padding: 10px; margin-top: 8px; border-radius: 6px; border: none; font-size: 16px; box-sizing: border-box; }
+        input { background: #1e293b; color: #fff; border: 1px solid #475569; }
+        button { background: #0284c7; color: white; font-weight: bold; cursor: pointer; }
+        button:hover { background: #0ea5e9; }
+        .btn-stop { background: #dc2626; }
+        .btn-stop:hover { background: #ef4444; }
+        .status-on { color: #4ade80; font-weight: bold; }
+        .status-off { color: #f87171; font-weight: bold; }
+        pre { background: #0f172a; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 13px; color: #38bdf8; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ND-SCALPING</h1>
+        <div class="card">
+            <h3>Estado do Sistema</h3>
+            <p>Estado: <span id="bot-status" class="{{ 'status-on' if running else 'status-off' }}">{{ 'ATIVO' if running else 'PARADO' }}</span></p>
+            <p>Saldo USDT: <span id="bot-balance">{{ balance }}</span></p>
+            <p>Log: <span id="bot-log">{{ log }}</span></p>
+        </div>
+
+        <div class="card">
+            <h3>Controlo</h3>
+            <form action="/toggle" method="POST">
+                <button type="submit" class="{{ 'btn-stop' if running else '' }}">{{ 'Desligar Robô' if running else 'Ligar Robô' }}</button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>Configurar Chaves API (Bybit)</h3>
+            <form action="/settings" method="POST">
+                <label>API Key:</label>
+                <input type="text" name="api_key" value="{{ api_key }}" required>
+                <label>API Secret:</label>
+                <input type="password" name="api_secret" value="{{ api_secret }}" required>
+                <button type="submit" style="background: #16a34a; margin-top: 15px;">Guardar Chaves</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+"""
 
 @app.route('/')
 def index():
-    cfg = load_config()
-    return jsonify({
-        "bot": "ND-SCALPING",
-        "status": "Online",
-        "running": bot_state["running"],
-        "configured": cfg["configured"],
-        "endpoints": {
-            "status": "/api/status",
-            "toggle": "/api/toggle (POST)",
-            "settings": "/api/settings (POST com api_key, api_secret, leverage)"
-        }
-    })
+    return render_template_string(
+        HTML_PAGE,
+        running=bot_state["running"],
+        balance=bot_state["balance"],
+        log=bot_state["log"],
+        api_key=bot_state["api_key"],
+        api_secret="" if not bot_state["api_secret"] else "********"
+    )
 
-@app.route('/api/status')
-def status():
-    cfg = load_config()
-    if not cfg["configured"]:
-        return jsonify({
-            "configured": False,
-            "running": False,
-            "balance": 0.0,
-            "market": [],
-            "active_position": None,
-            "log": "Chaves API em falta. Configure através do endpoint /api/settings."
-        })
+@app.route('/settings', methods=['POST'])
+def settings():
+    bot_state["api_key"] = request.form.get("api_key", "").strip()
+    secret = request.form.get("api_secret", "").strip()
+    if secret and secret != "********":
+        bot_state["api_secret"] = secret
+    bot_state["log"] = "Chaves atualizadas com sucesso!"
+    return index()
 
-    exchange = get_exchange_client()
-    balance_val = bot_state["balance"]
-    market_list = []
-
-    if exchange:
-        try:
-            bal = exchange.fetch_balance()
-            total_bal = float(bal.get('total', {}).get('USDT', 0.0))
-            if total_bal > 0:
-                balance_val = total_bal
-
-            for pair in PAIRS:
-                ticker = exchange.fetch_ticker(pair)
-                price = ticker.get('last', 0.0)
-                high = ticker.get('high', price)
-                low = ticker.get('low', price)
-                
-                market_list.append({
-                    "pair": pair.split('/')[0],
-                    "price": price,
-                    "high": high,
-                    "low": low,
-                    "rsi": 50.0,
-                    "trend": "LONG" if price > low else "SHORT"
-                })
-        except Exception as e:
-            logging.error(f"Erro Bybit API: {e}")
-
-    return jsonify({
-        "configured": True,
-        "running": bot_state["running"],
-        "balance": balance_val,
-        "realized_pnl": bot_state["realized_pnl"],
-        "active_position": bot_state["active_position"],
-        "market": market_list,
-        "history": bot_state["trades_history"],
-        "log": bot_state["log_message"]
-    })
-
-@app.route('/api/toggle', methods=['POST'])
-def toggle_bot():
-    if not are_keys_configured():
-        return jsonify({"error": "Configure as chaves API primeiro em /api/settings."}), 400
-    bot_state["running"] = not bot_state["running"]
-    bot_state["log_message"] = "ND-SCALPING Ativo." if bot_state["running"] else "Robô parado."
-    return jsonify({"running": bot_state["running"], "log": bot_state["log_message"]})
-
-@app.route('/api/settings', methods=['POST'])
-def update_settings():
-    data = request.json or request.form
-    api_key = data.get("api_key", "")
-    api_secret = data.get("api_secret", "")
-    is_testnet = data.get("is_testnet", False)
-    leverage = data.get("leverage", 17)
-
-    if not api_key or not api_secret:
-        return jsonify({"status": "error", "message": "API Key e API Secret são obrigatórias."}), 400
-
-    save_config(api_key, api_secret, is_testnet, leverage)
-    bot_state["log_message"] = "Chaves configuradas com sucesso nos Ajustes!"
+@app.route('/toggle', methods=['POST'])
+def toggle():
+    if not bot_state["api_key"] or not bot_state["api_secret"]:
+        bot_state["log"] = "Erro: Insira as chaves API primeiro!"
+        return index()
     
-    return jsonify({
-        "status": "success",
-        "message": "Chaves guardadas com sucesso nos ajustes do sistema.",
-        "configured": are_keys_configured()
-    })
+    bot_state["running"] = not bot_state["running"]
+    bot_state["log"] = "Robô ativado com sucesso." if bot_state["running"] else "Robô parado."
+    return index()
 
-def background_trading_loop():
+# Loop de fundo para simular e negociar
+def background_loop():
     while True:
         try:
-            if bot_state["running"] and are_keys_configured():
-                exchange = get_exchange_client()
-                if exchange and not bot_state["active_position"]:
-                    for pair in PAIRS:
-                        ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=30)
-                        indicators = engine.calculate_indicators(ohlcv)
-                        signal = engine.evaluate_signal(indicators)
-                        if signal:
-                            current_price = indicators["close"]
-                            engine.peak_price = current_price
-                            engine.active_stop_price = 0.0
-                            bot_state["active_position"] = {
-                                "pair": pair.split('/')[0],
-                                "side": signal,
-                                "entry": current_price
-                            }
-                            bot_state["log_message"] = f"Posição aberta em {pair.split('/')[0]} ({signal})."
-                            break
+            if bot_state["running"] and bot_state["api_key"]:
+                exchange = ccxt.bybit({
+                    'apiKey': bot_state["api_key"],
+                    'secret': bot_state["api_secret"],
+                    'enableRateLimit': True,
+                    'options': {'defaultType': 'swap'}
+                })
+                bal = exchange.fetch_balance()
+                total = float(bal.get('total', {}).get('USDT', 0.0))
+                if total > 0:
+                    bot_state["balance"] = total
         except Exception as e:
-            logging.error(f"Erro no loop de trading: {e}")
-        time.sleep(1)
+            logging.error(f"Erro no loop: {e}")
+        time.sleep(5)
 
 if __name__ == '__main__':
-    t = threading.Thread(target=background_trading_loop, daemon=True)
+    t = threading.Thread(target=background_loop, daemon=True)
     t.start()
     app.run(host='0.0.0.0', port=5000)
