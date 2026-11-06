@@ -8,21 +8,32 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(me
 
 app = Flask(__name__)
 
+# Estado global do robô
 bot_state = {
     "running": False,
     "api_key": "",
     "api_secret": "",
-    "balance": 0.0,
+    "is_testnet": False,
+    "leverage": 17,
+    "initial_balance": 0.255096,
+    "balance": 0.255096,
     "realized_pnl": 0.0,
     "active_position": None,
     "market_data": [],
-    "log": "Sistema operacional e pronto.",
-    "history": []
+    "history": [],
+    "log": "ND-SCALPING operacional e pronto."
 }
 
-PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'NEAR/USDT:USDT', 'LTC/USDT:USDT']
+PAIRS = [
+    'ADA/USDT:USDT',
+    'TRX/USDT:USDT',
+    'NEAR/USDT:USDT',
+    'LTC/USDT:USDT',
+    'XRP/USDT:USDT',
+    'DOGE/USDT:USDT'
+]
 
-HTML_PAGE = """
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt">
 <head>
@@ -30,75 +41,154 @@ HTML_PAGE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ND-SCALPING Pro</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 15px; }
-        .container { max-width: 650px; margin: auto; background: #1e293b; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.3); }
-        h1, h3 { color: #38bdf8; text-align: center; }
-        .card { background: #334155; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
-        input, button { width: 100%; padding: 10px; margin-top: 8px; border-radius: 6px; border: none; font-size: 15px; box-sizing: border-box; }
-        input { background: #1e293b; color: #fff; border: 1px solid #475569; }
-        button { background: #0284c7; color: white; font-weight: bold; cursor: pointer; }
-        button:hover { background: #0ea5e9; }
-        .btn-stop { background: #dc2626; }
-        .btn-stop:hover { background: #ef4444; }
-        .status-on { color: #4ade80; font-weight: bold; }
-        .status-off { color: #f87171; font-weight: bold; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px; }
-        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #475569; }
-        th { color: #38bdf8; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 10px 10px 70px 10px; }
+        .container { max-width: 500px; margin: auto; }
+        h1 { color: #4ade80; text-align: center; font-size: 22px; margin-bottom: 15px; }
+        .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .balance-box { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 10px; text-align: center; }
+        .balance-box span { display: block; font-size: 11px; color: #94a3b8; text-transform: uppercase; margin-bottom: 4px; }
+        .balance-box strong { font-size: 16px; color: #4ade80; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        .card h3 { color: #38bdf8; font-size: 14px; margin-top: 0; margin-bottom: 10px; text-transform: uppercase; }
+        button, input[type="submit"] { width: 100%; padding: 12px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
+        .btn-start { background: #16a34a; color: white; }
+        .btn-stop { background: #dc2626; color: white; }
+        input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; padding: 10px 0; z-index: 100; }
+        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 12px; font-weight: bold; cursor: pointer; text-align: center; }
+        .nav-btn.active { color: #4ade80; }
+        .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; }
+        .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
+        .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; }
     </style>
-    <meta http-equiv="refresh" content="10">
+    <script>
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            document.getElementById('btn-' + tabId).classList.add('active');
+        }
+    </script>
+    <meta http-equiv="refresh" content="15">
 </head>
 <body>
     <div class="container">
-        <h1>ND-SCALPING Pro</h1>
-        
-        <div class="card">
-            <h3>Estado do Sistema</h3>
-            <p>Estado: <span class="{{ 'status-on' if running else 'status-off' }}">{{ 'ATIVO (A negociar)' if running else 'PARADO' }}</span></p>
-            <p>Saldo Total: <b>{{ "%.4f"|format(balance) }} USDT</b></p>
-            <p>Log: {{ log }}</p>
+        <h1>ND-SCALPING</h1>
+
+        <div class="balance-grid">
+            <div class="balance-box">
+                <span>Inicial</span>
+                <strong>+{{ "%.6f"|format(initial_balance) }}</strong>
+            </div>
+            <div class="balance-box">
+                <span>Atual</span>
+                <strong>+{{ "%.6f"|format(balance) }}</strong>
+            </div>
         </div>
 
-        <div class="card">
-            <h3>Controlo do Robô</h3>
-            <form action="/toggle" method="POST">
-                <button type="submit" class="{{ 'btn-stop' if running else '' }}">{{ 'Desligar Robô' if running else 'Ligar Robô' }}</button>
-            </form>
-        </div>
-
-        <div class="card">
-            <h3>Mercado em Tempo Real</h3>
-            <table>
-                <tr>
-                    <th>Par</th>
-                    <th>Preço (USDT)</th>
-                    <th>RSI</th>
-                    <th>Tendência</th>
-                </tr>
-                {% for item in market_data %}
-                <tr>
-                    <td><b>{{ item.pair }}</b></td>
-                    <td>{{ item.price }}</td>
-                    <td>{{ "%.1f"|format(item.rsi) }}</td>
-                    <td><span style="color: {{ '#4ade80' if item.trend == 'LONG' else '#f87171' }}">{{ item.trend }}</span></td>
-                </tr>
+        <!-- ABA DASHBOARD -->
+        <div id="dashboard" class="tab-content active">
+            <div class="card">
+                <h3>Estado da Posição</h3>
+                {% if active_position %}
+                    <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
+                    <p>Entrada: <b>{{ active_position.entry }}</b></p>
                 {% else %}
-                <tr>
-                    <td colspan="4" style="text-align: center; color: #94a3b8;">Ligue o robô ou insira as chaves para carregar o mercado.</td>
-                </tr>
-                {% endfor %}
-            </table>
+                    <p style="text-align: center; color: #94a3b8;">Nenhuma posição ativa no momento.</p>
+                {% endif %}
+            </div>
+
+            <div class="card">
+                <h3>Alavancagem & Capital</h3>
+                <p>Alavancagem: <b>{{ leverage }}x</b></p>
+                <p>Poder de Compra: <b>+{{ "%.6f"|format(balance * leverage) }} USDT</b></p>
+            </div>
+
+            <div class="balance-grid">
+                <div class="balance-box">
+                    <span>Status</span>
+                    <strong style="color: {{ '#4ade80' if running else '#f87171' }}">{{ 'OPERANDO' if running else 'PARADO' }}</strong>
+                </div>
+                <div class="balance-box">
+                    <span>PNL Realizado</span>
+                    <strong>{{ "%.6f"|format(realized_pnl) }}</strong>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Estado / Log da API</h3>
+                <div class="log-box">{{ log }}</div>
+            </div>
+
+            <form action="/toggle" method="POST">
+                <button type="submit" class="{{ 'btn-stop' if running else 'btn-start' }}">
+                    {{ 'PARAR ROBÔ' if running else 'INICIAR ROBÔ' }}
+                </button>
+            </form>
         </div>
 
-        <div class="card">
-            <h3>Configurar Chaves API (Bybit)</h3>
-            <form action="/settings" method="POST">
-                <label>API Key:</label>
-                <input type="text" name="api_key" value="{{ api_key }}" required>
-                <label>API Secret:</label>
-                <input type="password" name="api_secret" value="{{ api_secret }}" required>
-                <button type="submit" style="background: #16a34a; margin-top: 15px;">Guardar Chaves</button>
-            </form>
+        <!-- ABA MERCADO -->
+        <div id="mercado" class="tab-content">
+            <div class="card">
+                <h3>Mercado Scalping ({{ market_data|length }} Ativos)</h3>
+                {% for item in market_data %}
+                <div class="market-item">
+                    <div>
+                        <b>{{ item.pair }}</b><br>
+                        <small style="color: #94a3b8;">Preço: {{ item.price }} | RSI: {{ "%.1f"|format(item.rsi) }}</small>
+                    </div>
+                    <span style="color: {{ '#4ade80' if item.trend == 'LONG' else ('#f87171' if item.trend == 'SHORT' else '#94a3b8') }}; font-weight: bold;">
+                        {{ item.trend }}
+                    </span>
+                </div>
+                {% else %}
+                <p style="text-align: center; color: #94a3b8;">A carregar dados da Bybit...</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- ABA HISTÓRICO -->
+        <div id="historico" class="tab-content">
+            <div class="card">
+                <h3>Histórico de Operações</h3>
+                {% for h in history %}
+                <div class="history-item">
+                    <b>{{ h.pair }} ({{ h.side }})</b> — <span style="color: {{ '#4ade80' if h.pnl >= 0 else '#f87171' }}">{{ "%.4f"|format(h.pnl) }} USDT</span><br>
+                    <small style="color: #94a3b8;">{{ h.reason }}</small>
+                </div>
+                {% else %}
+                <p style="text-align: center; color: #94a3b8;">Nenhum registo de histórico recente.</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- ABA AJUSTES -->
+        <div id="ajustes" class="tab-content">
+            <div class="card">
+                <h3>Configuração & Alavancagem</h3>
+                <form action="/settings" method="POST">
+                    <label>Bybit API Key:</label>
+                    <input type="text" name="api_key" value="{{ api_key }}" required>
+                    
+                    <label>Bybit API Secret:</label>
+                    <input type="password" name="api_secret" value="{{ api_secret }}" required>
+                    
+                    <label>Alavancagem Manual:</label>
+                    <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
+                    
+                    <button type="submit" class="btn-start" style="margin-top: 10px;">Guardar Definições</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- BARRA DE NAVEGAÇÃO INFERIOR -->
+        <div class="nav-bar">
+            <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊 Dashboard</button>
+            <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈 Mercado</button>
+            <button id="btn-historico" class="nav-btn" onclick="showTab('historico')">📋 Histórico</button>
+            <button id="btn-ajustes" class="nav-btn" onclick="showTab('ajustes')">⚙️ Ajustes</button>
         </div>
     </div>
 </body>
@@ -108,13 +198,18 @@ HTML_PAGE = """
 @app.route('/')
 def index():
     return render_template_string(
-        HTML_PAGE,
+        HTML_TEMPLATE,
         running=bot_state["running"],
+        initial_balance=bot_state["initial_balance"],
         balance=bot_state["balance"],
-        log=bot_state["log"],
+        realized_pnl=bot_state["realized_pnl"],
+        active_position=bot_state["active_position"],
         market_data=bot_state["market_data"],
+        history=bot_state["history"],
         api_key=bot_state["api_key"],
-        api_secret="" if not bot_state["api_secret"] else "********"
+        api_secret="" if not bot_state["api_secret"] else "********",
+        leverage=bot_state["leverage"],
+        log=bot_state["log"]
     )
 
 @app.route('/settings', methods=['POST'])
@@ -123,23 +218,28 @@ def settings():
     secret = request.form.get("api_secret", "").strip()
     if secret and secret != "********":
         bot_state["api_secret"] = secret
-    bot_state["log"] = "Chaves atualizadas com sucesso!"
+    try:
+        bot_state["leverage"] = int(request.form.get("leverage", 17))
+    except ValueError:
+        pass
+    
+    bot_state["log"] = "Definições e alavancagem atualizadas com sucesso."
     return index()
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves API primeiro!"
+        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes primeiro!"
         return index()
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e a monitorizar o mercado." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "ND-SCALPING Ativo e ligado à corretora." if bot_state["running"] else "Robô parado manualmente."
     return index()
 
 def background_loop():
     while True:
         try:
-            if bot_state["api_key"]:
+            if bot_state["api_key"] and bot_state["api_secret"]:
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
@@ -147,19 +247,18 @@ def background_loop():
                     'options': {'defaultType': 'swap'}
                 })
                 
-                # Ler Saldo Real
+                # Ler saldo real da Bybit
                 bal = exchange.fetch_balance()
                 total = float(bal.get('total', {}).get('USDT', 0.0))
                 if total > 0:
                     bot_state["balance"] = total
 
-                # Ler Mercado e calcular RSI em tempo real
+                # Ler mercado e indicadores RSI
                 market_list = []
                 for pair in PAIRS:
                     ticker = exchange.fetch_ticker(pair)
                     price = ticker.get('last', 0.0)
                     
-                    # Buscar velas para cálculo do RSI
                     ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=20)
                     if ohlcv and len(ohlcv) >= 14:
                         closes = [candle[4] for candle in ohlcv]
@@ -173,7 +272,13 @@ def background_loop():
                     else:
                         rsi = 50.0
 
-                    trend = "LONG" if rsi < 50 else "SHORT"
+                    if rsi < 35:
+                        trend = "LONG"
+                    elif rsi > 65:
+                        trend = "SHORT"
+                    else:
+                        trend = "NEUTRO"
+
                     market_list.append({
                         "pair": pair.split('/')[0],
                         "price": price,
@@ -184,7 +289,8 @@ def background_loop():
                 bot_state["market_data"] = market_list
 
         except Exception as e:
-            logging.error(f"Erro no loop de mercado: {e}")
+            logging.error(f"Erro na ligação à Bybit: {e}")
+            bot_state["log"] = f"Erro de leitura: {str(e)[:50]}"
         
         time.sleep(10)
 
