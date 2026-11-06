@@ -1,6 +1,7 @@
 import time
 import threading
 import logging
+import traceback
 import ccxt
 from flask import Flask, request, jsonify
 from config import load_config, save_config, PAIRS, are_keys_configured
@@ -9,6 +10,18 @@ from trading_engine import TradingEngine
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 app = Flask(__name__)
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Captura qualquer erro não tratado e mostra o traceback detalhado na resposta."""
+    tb = traceback.format_exc()
+    logging.error(f"Erro Crítico no Servidor: {e}\n{tb}")
+    return jsonify({
+        "status": "error",
+        "message": str(e),
+        "traceback": tb
+    }), 500
+
 config = load_config()
 engine = TradingEngine(config)
 
@@ -42,7 +55,6 @@ def get_exchange_client():
 
 @app.route('/')
 def index():
-    # Retorna uma resposta JSON direta para evitar erros de HTML em falta no servidor
     return jsonify({
         "bot": "ND-SCALPING",
         "status": "Online",
