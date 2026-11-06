@@ -57,15 +57,15 @@
             <div class="card-grid">
                 <div class="card">
                     <div class="card-title">Capital Inicial</div>
-                    <div class="card-value" id="dash-initial">+0.330964 USDT</div>
+                    <div class="card-value" id="dash-initial">0.000000 USDT</div>
                 </div>
                 <div class="card">
                     <div class="card-title">Capital Atual</div>
-                    <div class="card-value text-green" id="dash-current">+0.345210 USDT</div>
+                    <div class="card-value text-green" id="dash-current">0.000000 USDT</div>
                 </div>
                 <div class="card card-full">
                     <div class="card-title">Estado do Motor</div>
-                    <div class="card-value text-green" id="dash-status">OPERANDO (4 PARES DE ELITE)</div>
+                    <div class="card-value text-yellow" id="dash-status">AGUARDANDO CHAVES API</div>
                 </div>
             </div>
 
@@ -75,42 +75,14 @@
                 <canvas id="equityChart" width="100%" height="150"></canvas>
             </div>
 
-            <!-- Botão de Ligar/Desligar corrigido -->
-            <button id="toggle-btn" class="btn-action btn-stop" onclick="toggleBot()">PARAR ROBÔ</button>
+            <button id="toggle-btn" class="btn-action btn-start" onclick="toggleBot()">INICIAR ROBÔ</button>
         </div>
 
-        <!-- TAB MERCADO (Apenas os pares com subida, descida ou neutro, sem saldo) -->
+        <!-- TAB MERCADO -->
         <div id="tab-mercado" class="tab-content">
             <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; font-weight: bold;">Mercado Scalping (4 Pares)</div>
             <div id="market-list">
-                <div class="market-card">
-                    <div>
-                        <div style="font-weight: bold; font-size: 14px;">ADA</div>
-                        <div style="font-size: 11px; color: #94a3b8;">Preço: 0.1845 | RSI: 45.0</div>
-                    </div>
-                    <span class="text-yellow" style="font-size: 12px; font-weight: bold;">NEUTRO</span>
-                </div>
-                <div class="market-card">
-                    <div>
-                        <div style="font-weight: bold; font-size: 14px;">TRX</div>
-                        <div style="font-size: 11px; color: #94a3b8;">Preço: 0.3182 | RSI: 52.0</div>
-                    </div>
-                    <span class="text-green" style="font-size: 12px; font-weight: bold;">SUBIDA</span>
-                </div>
-                <div class="market-card">
-                    <div>
-                        <div style="font-weight: bold; font-size: 14px;">NEAR</div>
-                        <div style="font-size: 11px; color: #94a3b8;">Preço: 3.719 | RSI: 38.0</div>
-                    </div>
-                    <span class="text-red" style="font-size: 12px; font-weight: bold;">DESCIDA</span>
-                </div>
-                <div class="market-card">
-                    <div>
-                        <div style="font-weight: bold; font-size: 14px;">LTC</div>
-                        <div style="font-size: 11px; color: #94a3b8;">Preço: 52.78 | RSI: 49.0</div>
-                    </div>
-                    <span class="text-yellow" style="font-size: 12px; font-weight: bold;">NEUTRO</span>
-                </div>
+                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Configure as chaves API em Ajustes para ver os dados de mercado.</div>
             </div>
         </div>
 
@@ -118,8 +90,8 @@
         <div id="tab-historico" class="tab-content">
             <div class="card-grid">
                 <div class="card">
-                    <div class="card-title">Total Ganhos (<span id="win-count">2</span>)</div>
-                    <div class="card-value text-green" id="total-gains">+0.0044 USDT</div>
+                    <div class="card-title">Total Ganhos (<span id="win-count">0</span>)</div>
+                    <div class="card-value text-green" id="total-gains">0.0000 USDT</div>
                 </div>
                 <div class="card">
                     <div class="card-title">Total Perdas (<span id="loss-count">0</span>)</div>
@@ -127,7 +99,7 @@
                 </div>
                 <div class="card card-full" style="background: #0f172a; border-color: #38bdf8;">
                     <div class="card-title">Resultado Líquido Global</div>
-                    <div class="card-value text-green" id="net-result">+0.0044 USDT (LUCRO)</div>
+                    <div class="card-value text-green" id="net-result">0.0000 USDT</div>
                 </div>
             </div>
 
@@ -139,21 +111,11 @@
             </div>
 
             <div id="history-list">
-                <div class="trade-item" data-date="2026-06-06" data-pair="ADA">
-                    <div class="trade-header">
-                        <span>ADA (LONG)</span>
-                        <span class="text-green">+0.0007 USDT (+3.70%)</span>
-                    </div>
-                    <div style="font-size: 12px; color: #cbd5e1;">Fechado via Take Profit Institucional</div>
-                    <div class="trade-details">
-                        <span>🕒 09:23:35</span>
-                        <span>Retorno: +3.70%</span>
-                    </div>
-                </div>
+                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Nenhum registo disponível.</div>
             </div>
         </div>
 
-        <!-- TAB AJUSTES (API Key, Secret Key e Alavancagem) -->
+        <!-- TAB AJUSTES -->
         <div id="tab-ajustes" class="tab-content">
             <div class="card" style="text-align: left;">
                 <div class="card-title" style="margin-bottom: 15px; text-align: center;">Configuração de API & Alavancagem</div>
@@ -194,10 +156,10 @@
         const equityChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['07:00', '08:00', '09:00', '09:37'],
+                labels: [],
                 datasets: [{
                     label: 'Capital (USDT)',
-                    data: [0.3309, 0.3350, 0.3400, 0.3452],
+                    data: [],
                     borderColor: '#38bdf8',
                     backgroundColor: 'rgba(56, 189, 248, 0.1)',
                     borderWidth: 2,
@@ -215,25 +177,68 @@
             }
         });
 
-        function toggleBot() {
-            fetch('/api/toggle', { method: 'POST' })
+        function updateUI() {
+            fetch('/api/status')
                 .then(res => res.json())
                 .then(data => {
+                    const statusEl = document.getElementById('dash-status');
                     const btn = document.getElementById('toggle-btn');
-                    const status = document.getElementById('dash-status');
-                    if (data.running) {
-                        btn.innerText = "PARAR ROBÔ";
-                        btn.className = "btn-action btn-stop";
-                        status.innerText = "OPERANDO (4 PARES DE ELITE)";
-                        status.className = "card-value text-green";
-                    } else {
+                    
+                    if (!data.configured) {
+                        statusEl.innerText = "AGUARDANDO CHAVES API";
+                        statusEl.className = "card-value text-yellow";
+                        document.getElementById('dash-initial').innerText = "0.000000 USDT";
+                        document.getElementById('dash-current').innerText = "0.000000 USDT";
                         btn.innerText = "INICIAR ROBÔ";
                         btn.className = "btn-action btn-start";
-                        status.innerText = "ROBÔ PARADO";
-                        status.className = "card-value text-red";
+                        return;
                     }
+
+                    document.getElementById('dash-initial').innerText = `+${data.initial_balance.toFixed(6)} USDT`;
+                    document.getElementById('dash-current').innerText = `+${data.balance.toFixed(6)} USDT`;
+
+                    if (data.running) {
+                        statusEl.innerText = "OPERANDO (4 PARES DE ELITE)";
+                        statusEl.className = "card-value text-green";
+                        btn.innerText = "PARAR ROBÔ";
+                        btn.className = "btn-action btn-stop";
+                    } else {
+                        statusEl.innerText = "ROBÔ PARADO";
+                        statusEl.className = "card-value text-red";
+                        btn.innerText = "INICIAR ROBÔ";
+                        btn.className = "btn-action btn-start";
+                    }
+
+                    // Renderizar mercado apenas se configurado
+                    if (data.market) {
+                        const marketList = document.getElementById('market-list');
+                        marketList.innerHTML = '';
+                        data.market.forEach(item => {
+                            let trendClass = item.trend === 'SUBIDA' ? 'text-green' : (item.trend === 'DESCIDA' ? 'text-red' : 'text-yellow');
+                            marketList.innerHTML += `
+                                <div class="market-card">
+                                    <div>
+                                        <div style="font-weight: bold; font-size: 14px;">${item.pair}</div>
+                                        <div style="font-size: 11px; color: #94a3b8;">Preço: ${item.price} | RSI: ${item.rsi}</div>
+                                    </div>
+                                    <span class="${trendClass}" style="font-size: 12px; font-weight: bold;">${item.trend}</span>
+                                </div>
+                            `;
+                        });
+                    }
+                });
+        }
+
+        function toggleBot() {
+            fetch('/api/toggle', { method: 'POST' })
+                .then(res => {
+                    if (!res.ok) return res.json().then(err => { throw new Error(err.error); });
+                    return res.json();
                 })
-                .catch(err => alert('Erro ao comunicar com o servidor.'));
+                .then(data => {
+                    updateUI();
+                })
+                .catch(err => alert(err.message || 'Erro: Configure as chaves API primeiro em Ajustes.'));
         }
 
         function saveSettings() {
@@ -247,31 +252,16 @@
                 body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, leverage: leverage })
             })
             .then(res => res.json())
-            .then(data => alert(data.message))
+            .then(data => {
+                alert(data.message);
+                updateUI();
+            })
             .catch(err => alert('Erro ao guardar definições.'));
         }
 
-        function filterHistory() {
-            const search = document.getElementById('filter-search').value.toUpperCase();
-            const day = document.getElementById('filter-day').value;
-            const month = document.getElementById('filter-month').value;
-            const year = document.getElementById('filter-year').value;
-            
-            const items = document.querySelectorAll('.trade-item');
-            items.forEach(item => {
-                const dateStr = item.getAttribute('data-date');
-                const pair = item.getAttribute('data-pair');
-                const [itemYear, itemMonth, itemDay] = dateStr.split('-');
-                
-                let match = true;
-                if (search && !pair.includes(search)) match = false;
-                if (day && itemDay !== day) match = false;
-                if (month && itemMonth !== month) match = false;
-                if (year && itemYear !== year) match = false;
-                
-                item.style.display = match ? 'block' : 'none';
-            });
-        }
+        // Atualizar status ao carregar
+        updateUI();
+        setInterval(updateUI, 3000);
     </script>
 </body>
 </html>
