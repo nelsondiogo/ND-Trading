@@ -9,16 +9,14 @@ from trading_engine import TradingEngine
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
 app = Flask(__name__)
-config = load_config()
-engine = TradingEngine(config)
+engine = TradingEngine(load_config())
 
 bot_state = {
     "running": False,
     "balance": 0.2548,
-    "initial_balance": 0.2548,
     "realized_pnl": 0.0,
     "active_position": None,
-    "log_message": "ND-SCALPING v8.5 Operacional.",
+    "log_message": "ND-SCALPING Operacional.",
     "trades_history": []
 }
 
@@ -42,29 +40,30 @@ def get_exchange_client():
 
 @app.route('/')
 def index():
+    cfg = load_config()
     return jsonify({
-        "bot": "ND-SCALPING v8.5",
+        "bot": "ND-SCALPING",
         "status": "Online",
         "running": bot_state["running"],
-        "configured": are_keys_configured(),
+        "configured": cfg["configured"],
         "endpoints": {
             "status": "/api/status",
             "toggle": "/api/toggle (POST)",
-            "settings": "/api/settings (POST com api_key e api_secret)"
+            "settings": "/api/settings (POST com api_key, api_secret, leverage)"
         }
     })
 
 @app.route('/api/status')
 def status():
     cfg = load_config()
-    if not are_keys_configured():
+    if not cfg["configured"]:
         return jsonify({
             "configured": False,
             "running": False,
             "balance": 0.0,
             "market": [],
             "active_position": None,
-            "log": "Aguardando inserção de chaves em /api/settings."
+            "log": "Chaves API em falta. Configure através do endpoint /api/settings."
         })
 
     exchange = get_exchange_client()
@@ -109,29 +108,29 @@ def status():
 @app.route('/api/toggle', methods=['POST'])
 def toggle_bot():
     if not are_keys_configured():
-        return jsonify({"error": "Configure as chaves API primeiro através de /api/settings."}), 400
+        return jsonify({"error": "Configure as chaves API primeiro em /api/settings."}), 400
     bot_state["running"] = not bot_state["running"]
     bot_state["log_message"] = "ND-SCALPING Ativo." if bot_state["running"] else "Robô parado."
     return jsonify({"running": bot_state["running"], "log": bot_state["log_message"]})
 
 @app.route('/api/settings', methods=['POST'])
 def update_settings():
-    """Recebe as chaves API enviadas pelo utilizador"""
+    """Lê e guarda as chaves diretamente através dos Ajustes"""
     data = request.json or request.form
     api_key = data.get("api_key", "")
     api_secret = data.get("api_secret", "")
     is_testnet = data.get("is_testnet", False)
-    leverage = int(data.get("leverage", 17))
+    leverage = data.get("leverage", 17)
 
     if not api_key or not api_secret:
         return jsonify({"status": "error", "message": "API Key e API Secret são obrigatórias."}), 400
 
     save_config(api_key, api_secret, is_testnet, leverage)
-    bot_state["log_message"] = "Chaves API configuradas com sucesso!"
+    bot_state["log_message"] = "Chaves configuradas com sucesso nos Ajustes!"
     
     return jsonify({
         "status": "success",
-        "message": "Chaves da Bybit guardadas com sucesso. O robô já está pronto para arrancar.",
+        "message": "Chaves guardadas com sucesso nos ajustes do sistema.",
         "configured": are_keys_configured()
     })
 
