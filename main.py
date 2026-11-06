@@ -4,7 +4,7 @@ import logging
 from flask import Flask, request, jsonify
 from config import load_config, save_config, PAIRS, are_keys_configured
 from exchange import get_exchange_client
-from trading import TradingEngine
+from trading_engine import TradingEngine
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
