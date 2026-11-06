@@ -52,9 +52,7 @@ HTML_TEMPLATE = """
         .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
         
-        /* Inputs fixos a 100% para evitar retração visual */
         input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; max-width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
-        
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
@@ -303,7 +301,36 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Definições guardadas com sucesso."
+    # TESTE SÍNCRONO IMEDIATO AO GRAVAR (Descobre o erro ou sucesso na hora)
+    try:
+        temp_ex = ccxt.bybit({
+            'apiKey': bot_state["api_key"],
+            'secret': bot_state["api_secret"],
+            'enableRateLimit': True,
+            'options': {'defaultType': 'linear'}
+        })
+        temp_ex.load_markets()
+        bal = temp_ex.fetch_balance({'type': 'unified'})
+        
+        test_total = 0.0
+        if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
+            test_total = float(bal['total']['USDT'])
+        elif 'info' in bal and isinstance(bal['info'], dict):
+            res_list = bal['info'].get('result', {}).get('list', [])
+            if res_list:
+                for coin in res_list[0].get('coin', []):
+                    if coin.get('coin') == 'USDT':
+                        test_total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
+                        break
+
+        bot_state["balance"] = test_total
+        if bot_state["initial_balance"] == 0.0:
+            bot_state["initial_balance"] = test_total
+            
+        bot_state["log"] = f"Sucesso! Conectado à Bybit UTA. Saldo: {test_total:.4f} USDT"
+    except Exception as err:
+        bot_state["log"] = f"Falha na API Bybit: {str(err)[:80]}"
+
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -324,10 +351,7 @@ def background_loop():
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'enableRateLimit': True,
-                    'options': {
-                        'defaultType': 'linear',
-                        'adjustForTimeDifference': True
-                    }
+                    'options': {'defaultType': 'linear'}
                 })
                 
                 exchange.load_markets()
@@ -336,8 +360,7 @@ def background_loop():
                 
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
                     total = float(bal['total']['USDT'])
-                
-                if total == 0.0 and 'info' in bal and isinstance(bal['info'], dict):
+                elif 'info' in bal and isinstance(bal['info'], dict):
                     result_list = bal['info'].get('result', {}).get('list', [])
                     if result_list:
                         coin_list = result_list[0].get('coin', [])
@@ -386,12 +409,11 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
-                    bot_state["log"] = f"Ligado à Bybit UTA! Saldo: {total:.4f} USDT"
 
         except Exception as e:
             err_msg = str(e)
-            logging.error(f"Erro Bybit UTA: {err_msg}")
-            bot_state["log"] = f"Erro API: {err_msg[:60]}"
+            logging.error(f"Erro Bybit UTA Loop: {err_msg}")
+            # Mantém o log visível apenas se houver um erro crítico recorrente
         
         time.sleep(10)
 
