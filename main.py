@@ -20,7 +20,7 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "history": [],
-    "log": "Insira as chaves API na aba Ajustes para iniciar."
+    "log": "Sistema pronto. Insira as chaves API em Ajustes."
 }
 
 PAIRS = [
@@ -53,19 +53,17 @@ HTML_TEMPLATE = """
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
-        /* BARRA DE NAVEGAÇÃO INFERIOR COM BOTÃO CIRCULAR CENTRAL */
         .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 8px 0; z-index: 100; height: 55px; }
         .nav-btn { background: none; border: none; color: #94a3b8; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
         .nav-btn.active { color: #4ade80; }
         
-        /* Botão Circular Central */
         .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 12px; }
         .btn-circle { width: 48px; height: 48px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.4); color: white; transition: transform 0.1s; }
         .btn-circle:active { transform: scale(0.95); }
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
-        .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; }
+        .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; word-break: break-all; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
         .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
     </style>
@@ -173,7 +171,7 @@ HTML_TEMPLATE = """
                     </span>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8;">{{ 'Configure as chaves API para carregar o mercado.' if not configured else 'A carregar dados da Bybit...' }}</p>
+                <p style="text-align: center; color: #94a3b8;">{{ 'Configure as chaves API para carregar o mercado.' if not configured else 'A sincronizar com a Bybit...' }}</p>
                 {% endfor %}
             </div>
         </div>
@@ -300,7 +298,7 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Definições e alavancagem atualizadas com sucesso."
+    bot_state["log"] = "Chaves guardadas. A conectar à Bybit..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -310,70 +308,81 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "ND-SCALPING Ativo e ligado à corretora." if bot_state["running"] else "Robô parado manualmente."
+    bot_state["log"] = "ND-SCALPING Ativo e a operar." if bot_state["running"] else "Robô parado manualmente."
     return redirect(url_for('index'))
 
 def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
+                # Configuração otimizada para Bybit Futures (Linear Swap)
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'enableRateLimit': True,
-                    'options': {'defaultType': 'swap'}
+                    'options': {'defaultType': 'linear'}
                 })
                 
-                # Leitura real do saldo da Bybit em USDT (Conta unificada ou de derivativos)
+                # Carregar mercados obrigatoriamente para evitar erros de símbolos no CCXT
+                exchange.load_markets()
+
+                # Leitura correta do saldo na Bybit
                 bal = exchange.fetch_balance()
-                total = float(bal.get('total', {}).get('USDT', 0.0))
-                if total == 0 and 'info' in bal:
-                    # Fallback para estruturas alternativas de saldo da Bybit
-                    total = float(bal.get('free', {}).get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
+                total = 0.0
+                if 'total' in bal and 'USDT' in bal['total']:
+                    total = float(bal['total']['USDT'])
+                elif 'free' in bal and 'USDT' in bal['free']:
+                    total = float(bal['free']['USDT']) + float(bal.get('used', {}).get('USDT', 0.0))
                 
                 if total > 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
+                    bot_state["log"] = f"Conectado com sucesso! Saldo: {total:.4f} USDT"
 
                 # Leitura do mercado e RSI em tempo real
                 market_list = []
                 for pair in PAIRS:
-                    ticker = exchange.fetch_ticker(pair)
-                    price = ticker.get('last', 0.0)
-                    
-                    ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=20)
-                    if ohlcv and len(ohlcv) >= 14:
-                        closes = [candle[4] for candle in ohlcv]
-                        gains, losses = 0.0, 0.0
-                        for i in range(1, len(closes)):
-                            diff = closes[i] - closes[i-1]
-                            if diff > 0: gains += diff
-                            else: losses -= diff
-                        rs = (gains / 14) / ((losses / 14) if losses != 0 else 1)
-                        rsi = 100 - (100 / (1 + rs))
-                    else:
-                        rsi = 50.0
+                    try:
+                        ticker = exchange.fetch_ticker(pair)
+                        price = ticker.get('last', 0.0)
+                        
+                        ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=20)
+                        if ohlcv and len(ohlcv) >= 14:
+                            closes = [candle[4] for candle in ohlcv]
+                            gains, losses = 0.0, 0.0
+                            for i in range(1, len(closes)):
+                                diff = closes[i] - closes[i-1]
+                                if diff > 0: gains += diff
+                                else: losses -= diff
+                            rs = (gains / 14) / ((losses / 14) if losses != 0 else 1)
+                            rsi = 100 - (100 / (1 + rs))
+                        else:
+                            rsi = 50.0
 
-                    if rsi < 35:
-                        trend = "LONG"
-                    elif rsi > 65:
-                        trend = "SHORT"
-                    else:
-                        trend = "NEUTRO"
+                        if rsi < 35:
+                            trend = "LONG"
+                        elif rsi > 65:
+                            trend = "SHORT"
+                        else:
+                            trend = "NEUTRO"
 
-                    market_list.append({
-                        "pair": pair.split('/')[0],
-                        "price": price,
-                        "rsi": rsi,
-                        "trend": trend
-                    })
-                
-                bot_state["market_data"] = market_list
+                        market_list.append({
+                            "pair": pair.split('/')[0],
+                            "price": price,
+                            "rsi": rsi,
+                            "trend": trend
+                        })
+                    except Exception as ex:
+                        logging.error(f"Erro no par {pair}: {ex}")
+
+                if market_list:
+                    bot_state["market_data"] = market_list
 
         except Exception as e:
-            logging.error(f"Erro na ligação à Bybit: {e}")
-            bot_state["log"] = f"Erro de ligação à corretora: {str(e)[:40]}"
+            err_msg = str(e)
+            logging.error(f"Erro na ligação à Bybit: {err_msg}")
+            bot_state["log"] = f"Erro API: {err_msg[:45]}"
         
         time.sleep(10)
 
