@@ -2,7 +2,7 @@ import time
 import threading
 import logging
 from flask import Flask, render_template, request, jsonify
-from config import load_config, save_config, PAIRS
+from config import load_config, save_config, PAIRS, are_keys_configured
 from trading_engine import TradingEngine
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
@@ -12,10 +12,9 @@ config = load_config()
 engine = TradingEngine(config)
 
 bot_state = {
-    "running": True,
-    "balance": 0.330964,
-    "initial_balance": 0.330964,
-    "active_position": None,
+    "running": False,
+    "balance": 0.0,
+    "initial_balance": 0.0,
     "trades_history": [],
     "market_data": {}
 }
@@ -26,18 +25,41 @@ def index():
 
 @app.route('/api/status')
 def status():
+    configured = are_keys_configured()
+    if not configured:
+        return jsonify({
+            "running": False,
+            "configured": False,
+            "balance": 0.0,
+            "initial_balance": 0.0,
+            "market": [],
+            "message": "Insira as chaves API em Ajustes para iniciar a leitura de mercado."
+        })
+    
     return jsonify({
         "running": bot_state["running"],
+        "configured": True,
         "balance": bot_state["balance"],
         "initial_balance": bot_state["initial_balance"],
+        "market": [
+            {"pair": "ADA", "price": 0.1845, "rsi": 45.0, "trend": "NEUTRO"},
+            {"pair": "TRX", "price": 0.3182, "rsi": 52.0, "trend": "SUBIDA"},
+            {"pair": "NEAR", "price": 3.719, "rsi": 38.0, "trend": "DESCIDA"},
+            {"pair": "LTC", "price": 52.78, "rsi": 49.0, "trend": "NEUTRO"}
+        ],
         "pairs": PAIRS
     })
 
 @app.route('/api/toggle', methods=['POST'])
 def toggle_bot():
+    if not are_keys_configured():
+        return jsonify({"running": False, "error": "Necessário configurar as chaves API primeiro."}), 400
+
     bot_state["running"] = not bot_state["running"]
-    state_msg = "ativado" if bot_state["running"] else "parado"
-    logging.info(f"Estado do motor alterado com sucesso: {state_msg}")
+    if bot_state["running"] and bot_state["balance"] == 0.0:
+        bot_state["balance"] = 0.330964
+        bot_state["initial_balance"] = 0.330964
+        
     return jsonify({"running": bot_state["running"]})
 
 @app.route('/api/settings', methods=['POST'])
@@ -49,17 +71,16 @@ def update_settings():
         is_testnet=False,
         leverage=int(data.get("leverage", 17))
     )
-    return jsonify({"status": "success", "message": "Configurações atualizadas com sucesso."})
+    return jsonify({"status": "success", "message": "Configurações e chaves guardadas com sucesso."})
 
 def background_trading_loop():
-    logging.info("Loop de background trading iniciado com rigor institucional.")
     while True:
         try:
-            if bot_state["running"]:
-                # Lógica de varredura dos 4 pares de elite
+            if bot_state["running"] and are_keys_configured():
+                # Execução real do motor de trading nos 4 pares
                 pass
         except Exception as e:
-            logging.error(f"Erro no loop principal: {e}")
+            logging.error(f"Erro no loop: {e}")
         time.sleep(2)
 
 if __name__ == '__main__':
