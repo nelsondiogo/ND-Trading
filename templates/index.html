@@ -62,10 +62,14 @@
                 </div>
             </div>
 
-            <!-- Gráfico abaixo das informações iniciais -->
-            <div class="card" style="margin-bottom: 15px;">
-                <div class="card-title" style="margin-bottom: 10px;">Trajetória do Ativo em Operação</div>
+            <!-- Gráfico abaixo das informações iniciais (Apenas ativo se houver operação) -->
+            <div class="card" id="chart-container" style="margin-bottom: 15px; display: none;">
+                <div class="card-title" style="margin-bottom: 10px;" id="chart-title">Trajetória do Ativo em Operação</div>
                 <canvas id="equityChart" width="100%" height="180"></canvas>
+            </div>
+
+            <div id="no-op-msg" class="card" style="margin-bottom: 15px; color: #94a3b8; font-size: 12px; padding: 15px;">
+                Nenhuma operação ativa no momento. Gráfico em modo de espera.
             </div>
 
             <button id="toggle-btn" class="btn-action btn-start" onclick="toggleBot()">INICIAR ROBÔ</button>
@@ -75,7 +79,7 @@
         <div id="tab-mercado" class="tab-content">
             <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; font-weight: bold;">Mercado Scalping (4 Pares)</div>
             <div id="market-list">
-                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado da corretora.</div>
+                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado.</div>
             </div>
         </div>
 
@@ -142,31 +146,37 @@
             btn.classList.add('active');
         }
 
-        const ctx = document.getElementById('equityChart').getContext('2d');
-        const equityChart = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: ['12:00', '12:10', '12:20', '12:34'],
-                datasets: [{
-                    label: 'Preço Ativo',
-                    data: [0.1840, 0.1842, 0.1844, 0.1845],
-                    borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                    borderWidth: 2,
-                    fill: true,
-                    tension: 0.2,
-                    pointRadius: 3
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } },
-                    y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } }
+        let equityChart = null;
+
+        function initChart(labels, data, isLong) {
+            const ctx = document.getElementById('equityChart').getContext('2d');
+            if (equityChart) equityChart.destroy();
+            
+            equityChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Preço Ativo',
+                        data: data,
+                        borderColor: isLong ? '#22c55e' : '#ef4444',
+                        backgroundColor: isLong ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.2,
+                        pointRadius: 3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } },
+                        y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } }
+                    }
                 }
-            }
-        });
+            });
+        }
 
         function updateUI() {
             fetch('/api/status')
@@ -182,7 +192,9 @@
                         document.getElementById('dash-current').innerText = "0.000000 USDT";
                         btn.innerText = "INICIAR ROBÔ";
                         btn.className = "btn-action btn-start";
-                        document.getElementById('market-list').innerHTML = `<div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado.</div>`;
+                        document.getElementById('market-list').innerHTML = `<div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes.</div>`;
+                        document.getElementById('chart-container').style.display = 'none';
+                        document.getElementById('no-op-msg').style.display = 'block';
                         return;
                     }
 
@@ -199,6 +211,17 @@
                         statusEl.className = "card-value text-red";
                         btn.innerText = "INICIAR ROBÔ";
                         btn.className = "btn-action btn-start";
+                    }
+
+                    // Gerir gráfico estritamente se houver operação ativa
+                    if (data.active_position) {
+                        document.getElementById('chart-container').style.display = 'block';
+                        document.getElementById('no-op-msg').style.display = 'none';
+                        document.getElementById('chart-title').innerText = `Trajetória ${data.active_position.pair} (${data.active_position.side})`;
+                        initChart(['12:00', '12:10', '12:20', '12:34'], [0.1840, 0.1842, 0.1844, data.active_position.entry], data.active_position.side === 'LONG');
+                    } else {
+                        document.getElementById('chart-container').style.display = 'none';
+                        document.getElementById('no-op-msg').style.display = 'block';
                     }
 
                     if (data.market && data.market.length > 0) {
@@ -243,7 +266,8 @@
             .then(res => res.json())
             .then(data => {
                 alert(data.message);
-                updateUI();
+                // Atualiza a página automaticamente após guardar para desbloquear todas as informações
+                location.reload();
             })
             .catch(err => alert('Erro ao guardar definições.'));
         }
