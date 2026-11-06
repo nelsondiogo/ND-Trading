@@ -20,7 +20,7 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "history": [],
-    "log": "Sistema pronto. Insira as chaves API em Ajustes."
+    "log": "Aguardando chaves API..."
 }
 
 PAIRS = [
@@ -38,34 +38,38 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING Pro</title>
+    <title>ND-SCALPING</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 10px 10px 80px 10px; }
-        .container { max-width: 500px; margin: auto; }
-        h1 { color: #4ade80; text-align: center; font-size: 22px; margin-bottom: 15px; }
-        .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
-        .balance-box { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 10px; text-align: center; }
-        .balance-box span { display: block; font-size: 11px; color: #94a3b8; text-transform: uppercase; margin-bottom: 4px; }
-        .balance-box strong { font-size: 16px; color: #4ade80; }
-        .card { background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
-        .card h3 { color: #38bdf8; font-size: 14px; margin-top: 0; margin-bottom: 10px; text-transform: uppercase; }
-        input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
+        .container { max-width: 480px; margin: auto; }
+        h1 { color: #4ade80; text-align: center; font-size: 18px; margin: 8px 0 12px 0; font-weight: 700; letter-spacing: 0.5px; }
+        
+        .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .balance-box { background: #1e293b; border: 1px solid #334155; padding: 10px; border-radius: 8px; text-align: center; }
+        .balance-box span { display: block; font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
+        .balance-box strong { font-size: 14px; color: #4ade80; }
+        
+        .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
+        
+        input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
-        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 8px 0; z-index: 100; height: 55px; }
-        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
+        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 6px 0; z-index: 100; height: 50px; }
+        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 10px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
         .nav-btn.active { color: #4ade80; }
         
-        .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 12px; }
-        .btn-circle { width: 48px; height: 48px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.4); color: white; transition: transform 0.1s; }
+        .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 10px; }
+        .btn-circle { width: 44px; height: 44px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,0.3); color: white; transition: transform 0.1s; }
         .btn-circle:active { transform: scale(0.95); }
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
-        .log-box { background: #0f172a; border-left: 4px solid #38bdf8; padding: 10px; border-radius: 6px; font-size: 12px; color: #cbd5e1; word-break: break-all; max-height: 100px; overflow-y: auto; }
-        .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
-        .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+        .log-box { background: #0f172a; border-left: 3px solid #38bdf8; padding: 8px; border-radius: 4px; font-size: 11px; color: #cbd5e1; word-break: break-all; max-height: 80px; overflow-y: auto; }
+        .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
+        .history-item { background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
+        p { margin: 6px 0; font-size: 13px; }
     </style>
     <script>
         function showTab(tabId) {
@@ -104,41 +108,40 @@ HTML_TEMPLATE = """
                 </div>
             </div>
             {% else %}
-            <div class="card" style="border-left: 4px solid #f87171; text-align: center;">
-                <p style="color: #f87171; margin: 0; font-weight: bold;">Chaves API em falta!</p>
-                <small style="color: #94a3b8;">Vá à aba Ajustes para configurar a sua conta.</small>
+            <div class="card" style="border-left: 3px solid #f87171; text-align: center;">
+                <p style="color: #f87171; margin: 0; font-weight: bold; font-size: 12px;">Chaves API em falta!</p>
+                <small style="color: #94a3b8; font-size: 11px;">Configure na aba Ajustes.</small>
             </div>
             {% endif %}
 
             <div class="card">
-                <h3>Estado da Posição</h3>
+                <h3>Posição Ativa</h3>
                 {% if active_position %}
                     <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
                     <p>Entrada: <b>{{ active_position.entry }}</b></p>
                 {% else %}
-                    <p style="text-align: center; color: #94a3b8;">Nenhuma posição ativa no momento.</p>
+                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhuma posição ativa.</p>
                 {% endif %}
             </div>
 
             <div class="card">
-                <h3>Alavancagem & Capital</h3>
-                <p>Alavancagem: <b>{{ leverage }}x</b></p>
-                <p>Poder de Compra: <b>+{{ "%.6f"|format(balance * leverage) }} USDT</b></p>
+                <h3>Capital & Alavancagem</h3>
+                <p>Alavancagem: <b>{{ leverage }}x</b> | Poder: <b>+{{ "%.4f"|format(balance * leverage) }}</b></p>
             </div>
 
             <div class="balance-grid">
                 <div class="balance-box">
                     <span>Status</span>
-                    <strong style="color: {{ '#4ade80' if running else '#f87171' }}">{{ 'OPERANDO' if running else 'PARADO' }}</strong>
+                    <strong style="color: {{ '#4ade80' if running else '#f87171' }}; font-size: 13px;">{{ 'OPERANDO' if running else 'PARADO' }}</strong>
                 </div>
                 <div class="balance-box">
                     <span>PNL Realizado</span>
-                    <strong>{{ "%.6f"|format(realized_pnl) }}</strong>
+                    <strong style="font-size: 13px;">{{ "%.4f"|format(realized_pnl) }}</strong>
                 </div>
             </div>
 
             <div class="card">
-                <h3>Estado / Log da API</h3>
+                <h3>Log do Sistema</h3>
                 <div class="log-box">{{ log }}</div>
             </div>
         </div>
@@ -146,32 +149,32 @@ HTML_TEMPLATE = """
         <!-- ABA MERCADO -->
         <div id="mercado" class="tab-content">
             {% if configured %}
-            <div class="balance-grid" style="margin-bottom: 15px;">
+            <div class="balance-grid" style="margin-bottom: 10px;">
                 <div class="balance-box">
                     <span>Saldo Disponível</span>
-                    <strong>+{{ "%.6f"|format(balance) }} USDT</strong>
+                    <strong>+{{ "%.4f"|format(balance) }}</strong>
                 </div>
                 <div class="balance-box">
-                    <span>Ativos Monitorizados</span>
+                    <span>Ativos</span>
                     <strong style="color: #38bdf8;">{{ market_data|length }} Pares</strong>
                 </div>
             </div>
             {% endif %}
 
             <div class="card">
-                <h3>Mercado Scalping (Tempo Real)</h3>
+                <h3>Mercado em Tempo Real</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
-                        <b>{{ item.pair }}</b><br>
-                        <small style="color: #94a3b8;">Preço: {{ item.price }} | RSI: {{ "%.1f"|format(item.rsi) }}</small>
+                        <b>{{ item.pair }}</b> <small style="color: #94a3b8;">(RSI: {{ "%.1f"|format(item.rsi) }})</small><br>
+                        <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
                     </div>
-                    <span style="color: {{ '#4ade80' if item.trend == 'LONG' else ('#f87171' if item.trend == 'SHORT' else '#94a3b8') }}; font-weight: bold;">
+                    <span style="color: {{ '#4ade80' if item.trend == 'LONG' else ('#f87171' if item.trend == 'SHORT' else '#94a3b8') }}; font-weight: bold; font-size: 12px;">
                         {{ item.trend }}
                     </span>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8;">{{ 'Configure as chaves API para carregar o mercado.' if not configured else 'A sincronizar com a Bybit...' }}</p>
+                <p style="text-align: center; color: #94a3b8; font-size: 12px;">{{ 'Insira as chaves em Ajustes.' if not configured else 'A sincronizar com a Bybit...' }}</p>
                 {% endfor %}
             </div>
         </div>
@@ -179,7 +182,7 @@ HTML_TEMPLATE = """
         <!-- ABA HISTÓRICO -->
         <div id="historico" class="tab-content">
             <div class="card">
-                <h3>Resumo Geral do Histórico</h3>
+                <h3>Resumo Geral</h3>
                 {% set total_trades = history|length %}
                 {% set pos_count = namespace(val=0) %}
                 {% set neg_count = namespace(val=0) %}
@@ -196,10 +199,8 @@ HTML_TEMPLATE = """
                     {% endif %}
                 {% endfor %}
 
-                <p>Total de Operações: <b>{{ total_trades }}</b></p>
-                <p>Positivas: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Negativas: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
-                <p>Resultado Geral (USDT): <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b></p>
-                <p>Resultado Geral (%): <b style="color: {{ '#4ade80' if total_pct.val >= 0 else '#f87171' }}">{{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%</b></p>
+                <p style="font-size: 12px;">Total: <b>{{ total_trades }}</b> | Pos: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Neg: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
+                <p style="font-size: 12px;">Resultado: <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b> ({{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%)</p>
             </div>
 
             <div class="card">
@@ -208,19 +209,19 @@ HTML_TEMPLATE = """
                 <div class="history-item">
                     <div>
                         <b>{{ h.pair }} ({{ h.side }})</b><br>
-                        <small style="color: #94a3b8;">{{ h.reason }}</small>
+                        <small style="color: #94a3b8; font-size: 10px;">{{ h.reason }}</small>
                     </div>
                     <div style="text-align: right;">
-                        <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold;">
-                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }} USDT
+                        <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold; font-size: 12px;">
+                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }}
                         </span><br>
-                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }};">
+                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }}; font-size: 10px;">
                             {{ "+%.2f"|format(h.pnl_pct) if h.pnl_pct >= 0 else "%.2f"|format(h.pnl_pct) }}%
                         </small>
                     </div>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8;">Nenhum registo de histórico recente.</p>
+                <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhum registo recente.</p>
                 {% endfor %}
             </div>
         </div>
@@ -228,18 +229,18 @@ HTML_TEMPLATE = """
         <!-- ABA AJUSTES -->
         <div id="ajustes" class="tab-content">
             <div class="card">
-                <h3>Configuração & Alavancagem</h3>
+                <h3>Configuração API</h3>
                 <form action="/settings" method="POST">
-                    <label>Bybit API Key:</label>
+                    <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
                     <input type="text" name="api_key" value="{{ api_key }}" required>
                     
-                    <label>Bybit API Secret:</label>
+                    <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
                     <input type="password" name="api_secret" value="{{ api_secret }}" required>
                     
-                    <label>Alavancagem Manual:</label>
+                    <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
                     
-                    <button type="submit" style="width: 100%; padding: 12px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; background: #16a34a; color: white; margin-top: 10px;">Guardar Definições</button>
+                    <button type="submit" style="width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; background: #16a34a; color: white; margin-top: 6px;">Guardar Definições</button>
                 </form>
             </div>
         </div>
@@ -249,7 +250,6 @@ HTML_TEMPLATE = """
             <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊<br>Dashboard</button>
             <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈<br>Mercado</button>
             
-            <!-- Botão Circular Central de Ligar/Desligar -->
             <div class="center-toggle-container">
                 <form action="/toggle" method="POST" style="margin:0;">
                     <button type="submit" class="btn-circle {{ 'stop' if running else 'start' }}" title="{{ 'Parar Robô' if running else 'Iniciar Robô' }}">
@@ -298,17 +298,17 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Chaves guardadas. A testar ligação à Bybit..."
+    bot_state["log"] = "Chaves atualizadas. A testar conexão..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes primeiro!"
+        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "ND-SCALPING Ativo e a operar." if bot_state["running"] else "Robô parado manualmente."
+    bot_state["log"] = "Robô ativado." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -322,7 +322,7 @@ def background_loop():
                     'options': {'defaultType': 'linear'}
                 })
                 
-                # Teste direto de saldo na Bybit
+                exchange.load_markets()
                 bal = exchange.fetch_balance()
                 total = 0.0
                 if 'total' in bal and 'USDT' in bal['total']:
@@ -335,7 +335,6 @@ def background_loop():
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
-                # Leitura do mercado e RSI em tempo real
                 market_list = []
                 for pair in PAIRS:
                     try:
@@ -355,12 +354,7 @@ def background_loop():
                         else:
                             rsi = 50.0
 
-                        if rsi < 35:
-                            trend = "LONG"
-                        elif rsi > 65:
-                            trend = "SHORT"
-                        else:
-                            trend = "NEUTRO"
+                        trend = "LONG" if rsi < 35 else ("SHORT" if rsi > 65 else "NEUTRO")
 
                         market_list.append({
                             "pair": pair.split('/')[0],
@@ -373,12 +367,12 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
-                    bot_state["log"] = f"Sincronizado! Saldo: {total:.4f} USDT | Ativos: {len(market_list)}"
+                    bot_state["log"] = f"Sincronizado! Saldo: {total:.4f} USDT"
 
         except Exception as e:
             err_msg = str(e)
-            logging.error(f"Erro na ligação à Bybit: {err_msg}")
-            bot_state["log"] = f"ERRO BYBIT: {err_msg[:90]}"
+            logging.error(f"Erro Bybit: {err_msg}")
+            bot_state["log"] = f"Erro API: {err_msg[:60]}"
         
         time.sleep(10)
 
