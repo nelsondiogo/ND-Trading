@@ -1,4 +1,7 @@
 import os
+import json
+
+CONFIG_FILE = "settings.json"
 
 PAIRS = [
     'ADA/USDT:USDT',
@@ -12,29 +15,40 @@ STOP_LOSS_PCT = 0.012    # 1.2% Stop Loss Base
 TRAILING_ACTIVATION = 0.005 # 0.5% para ativar a trava móvel
 LEVERAGE = 17
 
-_config_store = {
-    "BYBIT_API_KEY": os.environ.get("BYBIT_API_KEY", ""),
-    "BYBIT_API_SECRET": os.environ.get("BYBIT_API_SECRET", ""),
-    "IS_TESTNET": os.environ.get("IS_TESTNET", "False").lower() in ["true", "1"],
-    "LEVERAGE": LEVERAGE
-}
-
-def are_keys_configured():
-    return bool(_config_store["BYBIT_API_KEY"].strip() and _config_store["BYBIT_API_SECRET"].strip())
-
 def load_config():
+    # Tenta carregar do ficheiro local de ajustes, com fallback para variáveis de ambiente
+    settings = {}
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r") as f:
+                settings = json.load(f)
+        except Exception:
+            pass
+
+    api_key = settings.get("api_key", os.environ.get("BYBIT_API_KEY", "")).strip()
+    api_secret = settings.get("api_secret", os.environ.get("BYBIT_API_SECRET", "")).strip()
+    is_testnet = settings.get("is_testnet", os.environ.get("IS_TESTNET", "False").lower() in ["true", "1"])
+    leverage = int(settings.get("leverage", LEVERAGE))
+
     return {
-        "BYBIT_API_KEY": _config_store["BYBIT_API_KEY"],
-        "BYBIT_API_SECRET": _config_store["BYBIT_API_SECRET"],
-        "IS_TESTNET": _config_store["IS_TESTNET"],
-        "LEVERAGE": _config_store["LEVERAGE"],
+        "BYBIT_API_KEY": api_key,
+        "BYBIT_API_SECRET": api_secret,
+        "IS_TESTNET": is_testnet,
+        "LEVERAGE": leverage,
         "take_profit": TAKE_PROFIT_PCT,
         "stop_loss": STOP_LOSS_PCT,
-        "configured": are_keys_configured()
+        "configured": bool(api_key and api_secret)
     }
 
-def save_config(api_key, api_secret, is_testnet, leverage):
-    _config_store["BYBIT_API_KEY"] = api_key.strip()
-    _config_store["BYBIT_API_SECRET"] = api_secret.strip()
-    _config_store["IS_TESTNET"] = bool(is_testnet)
-    _config_store["LEVERAGE"] = int(leverage)
+def save_config(api_key, api_secret, is_testnet=False, leverage=17):
+    settings = {
+        "api_key": api_key.strip(),
+        "api_secret": api_secret.strip(),
+        "is_testnet": bool(is_testnet),
+        "leverage": int(leverage)
+    }
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(settings, f)
+
+def are_keys_configured():
+    return load_config()["configured"]
