@@ -318,20 +318,28 @@ def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
+                # Instanciação otimizada específica para Conta Unificada Bybit (UTA V5)
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'enableRateLimit': True,
-                    'options': {'defaultType': 'linear'}
+                    'options': {
+                        'defaultType': 'linear',
+                        'adjustForTimeDifference': True
+                    }
                 })
                 
                 exchange.load_markets()
-                bal = exchange.fetch_balance()
+                
+                # Chamada forçada ao tipo unificado para evitar retorno vazio em contas UTA
+                bal = exchange.fetch_balance({'type': 'unified'})
                 total = 0.0
                 
+                # Extração em cascata altamente resiliente
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
                     total = float(bal['total']['USDT'])
-                elif 'info' in bal and isinstance(bal['info'], dict):
+                
+                if total == 0.0 and 'info' in bal and isinstance(bal['info'], dict):
                     result_list = bal['info'].get('result', {}).get('list', [])
                     if result_list:
                         coin_list = result_list[0].get('coin', [])
@@ -380,11 +388,11 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
-                    bot_state["log"] = f"Ligado à Bybit! Saldo: {total:.4f} USDT"
+                    bot_state["log"] = f"Ligado à Bybit UTA! Saldo: {total:.4f} USDT"
 
         except Exception as e:
             err_msg = str(e)
-            logging.error(f"Erro Bybit: {err_msg}")
+            logging.error(f"Erro Bybit UTA: {err_msg}")
             bot_state["log"] = f"Erro API: {err_msg[:60]}"
         
         time.sleep(10)
