@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING</title>
+    <title>ND-SCALPING v8.5</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
         body { background-color: #0b0f19; color: #f1f5f9; padding-bottom: 70px; }
-        header { background: #111827; padding: 15px; text-align: center; border-bottom: 1px solid #1f2937; font-weight: bold; font-size: 16px; color: #38bdf8; letter-spacing: 1px; }
+        .bot-header { background: #111827; padding: 10px; text-align: center; border-bottom: 1px solid #1f2937; font-weight: bold; font-size: 13px; color: #22c55e; letter-spacing: 0.5px; }
         .container { padding: 15px; max-width: 600px; margin: 0 auto; }
         
-        .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
         .card { background: #1e293b; padding: 15px; border-radius: 10px; border: 1px solid #334155; text-align: center; }
         .card-full { grid-column: span 2; }
         .card-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; margin-bottom: 5px; }
@@ -22,13 +22,17 @@
 
         .market-card { background: #1e293b; padding: 12px 15px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #334155; }
         
+        .trade-item { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #38bdf8; font-size: 13px; }
+        .trade-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px; }
+        .trade-details { font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; margin-top: 4px; border-top: 1px solid #334155; padding-top: 4px; }
+
         .form-group { margin-bottom: 12px; text-align: left; }
         .form-group label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; text-transform: uppercase; }
         .form-group input { width: 100%; background: #0f172a; border: 1px solid #475569; color: #fff; padding: 8px 10px; border-radius: 5px; font-size: 13px; }
 
         nav { position: fixed; bottom: 0; left: 0; width: 100%; background: #111827; display: flex; justify-content: space-around; padding: 12px 0; border-top: 1px solid #1f2937; z-index: 1000; }
         nav button { background: none; border: none; color: #94a3b8; font-size: 12px; cursor: pointer; font-weight: 600; }
-        nav button.active { color: #38bdf8; }
+        nav button.active { color: #22c55e; }
         
         .tab-content { display: none; }
         .tab-content.active { display: block; }
@@ -41,7 +45,7 @@
 </head>
 <body>
 
-    <header>ND-SCALPING</header>
+    <div class="bot-header">ND-SCALPING v8.5 (Alvo 0.5% & Alta Frequência)</div>
 
     <div class="container">
 
@@ -49,27 +53,68 @@
         <div id="tab-dashboard" class="tab-content active">
             <div class="card-grid">
                 <div class="card">
-                    <div class="card-title">Capital Inicial</div>
-                    <div class="card-value" id="dash-initial">0.000000 USDT</div>
+                    <div class="card-title">Inicial</div>
+                    <div class="card-value" id="dash-initial">+0.254800</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Capital Atual</div>
-                    <div class="card-value text-green" id="dash-current">0.000000 USDT</div>
-                </div>
-                <div class="card card-full">
-                    <div class="card-title">Estado do Motor</div>
-                    <div class="card-value text-yellow" id="dash-status">AGUARDANDO CHAVES API</div>
+                    <div class="card-title">Atual</div>
+                    <div class="card-value text-green" id="dash-current">+0.254800</div>
                 </div>
             </div>
 
-            <!-- Gráfico abaixo das informações iniciais -->
-            <div class="card" id="chart-container" style="margin-bottom: 15px; display: none;">
-                <div class="card-title" style="margin-bottom: 10px;" id="chart-title">Trajetória do Ativo em Operação</div>
-                <canvas id="equityChart" width="100%" height="180"></canvas>
+            <!-- Posição Ativa ou Estado de Repouso -->
+            <div id="dash-active-box" class="card" style="margin-bottom: 12px; display: none; text-align: left;">
+                <div id="active-title" style="font-weight: bold; margin-bottom: 8px; font-size: 14px;" class="text-green">ADA (LONG 17x)</div>
+                <div style="font-size: 11px; color: #94a3b8; margin-bottom: 8px;">Preço Atual: <span id="act-price" style="color: #fff;">0.1845</span></div>
+                <div class="card-grid" style="margin-bottom: 5px;">
+                    <div style="background: #0f172a; padding: 8px; border-radius: 6px; text-align: center;">
+                        <div class="card-title">PNL (%)</div>
+                        <div class="card-value text-green" id="act-pnl-pct">+0.00%</div>
+                    </div>
+                    <div style="background: #0f172a; padding: 8px; border-radius: 6px; text-align: center;">
+                        <div class="card-title">PNL (USDT)</div>
+                        <div class="card-value text-green" id="act-pnl-usdt">0.0000</div>
+                    </div>
+                </div>
+                <div class="card-grid">
+                    <div style="background: #0f172a; padding: 6px; border-radius: 6px; text-align: center;">
+                        <div class="card-title">Entrada</div>
+                        <div style="font-weight: bold; color: #eab308; font-size: 13px;" id="act-entry">0.0000</div>
+                    </div>
+                    <div style="background: #0f172a; padding: 6px; border-radius: 6px; text-align: center;">
+                        <div class="card-title">Máximo</div>
+                        <div style="font-weight: bold; color: #22c55e; font-size: 13px;" id="act-high">0.0000</div>
+                    </div>
+                    <div style="background: #0f172a; padding: 6px; border-radius: 6px; text-align: center; grid-column: span 2;">
+                        <div class="card-title">Mínimo</div>
+                        <div style="font-weight: bold; color: #ef4444; font-size: 13px;" id="act-low">0.0000</div>
+                    </div>
+                </div>
             </div>
 
-            <div id="no-op-msg" class="card" style="margin-bottom: 15px; color: #94a3b8; font-size: 12px; padding: 15px;">
-                Nenhuma operação ativa no momento. Gráfico em modo de espera.
+            <div id="no-op-msg" class="card" style="margin-bottom: 12px; color: #94a3b8; font-size: 12px; padding: 15px;">
+                Nenhuma posição ativa no momento.
+            </div>
+
+            <div class="card" style="margin-bottom: 12px; padding: 10px;">
+                <div class="card-title">Alavancagem Configurada: <span id="conf-lev" class="text-green">17x</span></div>
+                <div style="font-size: 12px; color: #cbd5e1; margin-top: 3px;">Poder de Compra: <span id="conf-power" class="text-green">+4.33 USDT</span></div>
+            </div>
+
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-title">Status</div>
+                    <div class="card-value text-yellow" id="dash-status">PARADO</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">PNL Realizado</div>
+                    <div class="card-value" id="dash-realized">0.000000</div>
+                </div>
+            </div>
+
+            <div class="card" style="background: #0f172a; border-color: #22c55e; padding: 10px; margin-bottom: 15px; text-align: left;">
+                <div class="card-title" style="margin-bottom: 3px;">Estado / Log da API:</div>
+                <div style="font-size: 11px; color: #22c55e; font-family: monospace;" id="dash-log">Aguardando início...</div>
             </div>
 
             <button id="toggle-btn" class="btn-action btn-start" onclick="toggleBot()">INICIAR ROBÔ</button>
@@ -79,37 +124,27 @@
         <div id="tab-mercado" class="tab-content">
             <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; font-weight: bold;">Mercado Scalping (4 Pares)</div>
             <div id="market-list">
-                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado.</div>
+                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes.</div>
             </div>
         </div>
 
         <!-- TAB HISTÓRICO -->
         <div id="tab-historico" class="tab-content">
-            <div class="card-grid">
+            <div class="card-grid" style="margin-bottom: 12px;">
                 <div class="card">
-                    <div class="card-title">Total Ganhos (<span id="win-count">0</span>)</div>
-                    <div class="card-value text-green" id="total-gains">0.0000 USDT</div>
+                    <div class="card-title">Lucro Total</div>
+                    <div class="card-value text-green" id="hist-total-profit">+0.000170</div>
                 </div>
                 <div class="card">
-                    <div class="card-title">Total Perdas (<span id="loss-count">0</span>)</div>
-                    <div class="card-value text-red" id="total-losses">0.0000 USDT</div>
-                </div>
-                <div class="card card-full" style="background: #0f172a; border-color: #38bdf8;">
-                    <div class="card-title">Resultado Líquido Global</div>
-                    <div class="card-value text-green" id="net-result">0.0000 USDT</div>
+                    <div class="card-title">Win Rate</div>
+                    <div class="card-value text-green" id="hist-winrate">100%</div>
                 </div>
             </div>
-
-            <div style="background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-                <input type="text" id="filter-search" placeholder="Ativo (ex: ADA)" style="width: 100%; background: #0f172a; border: 1px solid #475569; color: #fff; padding: 6px 10px; border-radius: 5px; font-size: 12px;">
-            </div>
-
-            <div id="history-list">
-                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Nenhum registo de operação.</div>
-            </div>
+            <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 8px; font-weight: bold;">Registo de Trades</div>
+            <div id="history-list"></div>
         </div>
 
-        <!-- TAB AJUSTES -->
+        <!-- TAB AJUSTES (Chaves fixas) -->
         <div id="tab-ajustes" class="tab-content">
             <div class="card" style="text-align: left;">
                 <div class="card-title" style="margin-bottom: 15px; text-align: center;">Configuração de API & Alavancagem</div>
@@ -146,38 +181,6 @@
             btn.classList.add('active');
         }
 
-        let equityChart = null;
-
-        function initChart(labels, data, isLong) {
-            const ctx = document.getElementById('equityChart').getContext('2d');
-            if (equityChart) equityChart.destroy();
-            
-            equityChart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    labels: labels,
-                    datasets: [{
-                        label: 'Preço Ativo',
-                        data: data,
-                        borderColor: isLong ? '#22c55e' : '#ef4444',
-                        backgroundColor: isLong ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.2,
-                        pointRadius: 3
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } },
-                        y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } }
-                    }
-                }
-            });
-        }
-
         function updateUI() {
             fetch('/api/status')
                 .then(res => res.json())
@@ -185,62 +188,69 @@
                     const statusEl = document.getElementById('dash-status');
                     const btn = document.getElementById('toggle-btn');
                     
-                    // Preencher campos de ajustes com valores fixos se existirem
                     if (data.config) {
-                        if (document.getElementById('api-key').value === '') {
-                            document.getElementById('api-key').value = data.config.BYBIT_API_KEY || '';
+                        if (document.getElementById('api-key').value === '' && data.config.BYBIT_API_KEY) {
+                            document.getElementById('api-key').value = data.config.BYBIT_API_KEY;
                         }
-                        if (document.getElementById('api-secret').value === '') {
-                            document.getElementById('api-secret').value = data.config.BYBIT_API_SECRET || '';
+                        if (document.getElementById('api-secret').value === '' && data.config.BYBIT_API_SECRET) {
+                            document.getElementById('api-secret').value = data.config.BYBIT_API_SECRET;
                         }
                         if (data.config.LEVERAGE) {
                             document.getElementById('leverage').value = data.config.LEVERAGE;
+                            document.getElementById('conf-lev').innerText = data.config.LEVERAGE + 'x';
                         }
                     }
 
                     if (!data.configured) {
-                        statusEl.innerText = "AGUARDANDO CHAVES API";
-                        statusEl.className = "card-value text-yellow";
-                        document.getElementById('dash-initial').innerText = "0.000000 USDT";
-                        document.getElementById('dash-current').innerText = "0.000000 USDT";
+                        statusEl.innerText = "PARADO";
+                        statusEl.className = "card-value text-red";
+                        document.getElementById('dash-initial').innerText = "+0.254800";
+                        document.getElementById('dash-current').innerText = "+0.254800";
                         btn.innerText = "INICIAR ROBÔ";
                         btn.className = "btn-action btn-start";
-                        document.getElementById('market-list').innerHTML = `<div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes.</div>`;
-                        document.getElementById('chart-container').style.display = 'none';
-                        document.getElementById('no-op-msg').style.display = 'block';
+                        document.getElementById('dash-log').innerText = "Insira as chaves API em Ajustes.";
                         return;
                     }
 
-                    document.getElementById('dash-initial').innerText = `+${data.initial_balance.toFixed(6)} USDT`;
-                    document.getElementById('dash-current').innerText = `+${data.balance.toFixed(6)} USDT`;
+                    document.getElementById('dash-initial').innerText = `+${data.initial_balance.toFixed(6)}`;
+                    document.getElementById('dash-current').innerText = `+${data.balance.toFixed(6)}`;
+                    document.getElementById('conf-power').innerText = `+${data.buying_power.toFixed(6)} USDT`;
+                    document.getElementById('dash-realized').innerText = data.realized_pnl.toFixed(6);
+                    document.getElementById('dash-log').innerText = data.log;
 
                     if (data.running) {
-                        statusEl.innerText = "OPERANDO (4 PARES DE ELITE)";
+                        statusEl.innerText = "OPERANDO";
                         statusEl.className = "card-value text-green";
                         btn.innerText = "PARAR ROBÔ";
                         btn.className = "btn-action btn-stop";
                     } else {
-                        statusEl.innerText = "ROBÔ PARADO";
+                        statusEl.innerText = "PARADO";
                         statusEl.className = "card-value text-red";
                         btn.innerText = "INICIAR ROBÔ";
                         btn.className = "btn-action btn-start";
                     }
 
+                    // Posição ativa (um par por vez)
                     if (data.active_position) {
-                        document.getElementById('chart-container').style.display = 'block';
+                        document.getElementById('dash-active-box').style.display = 'block';
                         document.getElementById('no-op-msg').style.display = 'none';
-                        document.getElementById('chart-title').innerText = `Trajetória ${data.active_position.pair} (${data.active_position.side})`;
-                        initChart(['12:00', '12:10', '12:20', '12:34'], [0.1840, 0.1842, 0.1844, data.active_position.entry], data.active_position.side === 'LONG');
+                        const pos = data.active_position;
+                        document.getElementById('active-title').innerText = `${pos.pair} (${pos.side} ${data.config.LEVERAGE}x)`;
+                        document.getElementById('act-price').innerText = pos.entry;
+                        document.getElementById('act-entry').innerText = pos.entry;
+                        document.getElementById('act-high').innerText = pos.high;
+                        document.getElementById('act-low').innerText = pos.low;
                     } else {
-                        document.getElementById('chart-container').style.display = 'none';
+                        document.getElementById('dash-active-box').style.display = 'none';
                         document.getElementById('no-op-msg').style.display = 'block';
                     }
 
+                    // Mercado
                     if (data.market && data.market.length > 0) {
                         const marketList = document.getElementById('market-list');
                         marketList.innerHTML = '';
                         data.market.forEach(item => {
-                            let trendClass = item.trend === 'SUBIDA' ? 'text-green' : (item.trend === 'DESCIDA' ? 'text-red' : 'text-yellow');
+                            let trendClass = item.trend === 'LONG' ? 'text-green' : (item.trend === 'SHORT' ? 'text-red' : 'text-yellow');
                             marketList.innerHTML += `
                                 <div class="market-card">
                                     <div>
@@ -252,17 +262,35 @@
                             `;
                         });
                     }
+
+                    // Histórico
+                    if (data.history) {
+                        const histList = document.getElementById('history-list');
+                        histList.innerHTML = '';
+                        data.history.forEach(h => {
+                            histList.innerHTML += `
+                                <div class="trade-item">
+                                    <div class="trade-header">
+                                        <span>${h.pair} (${h.side})</span>
+                                        <span class="text-green">+${h.pnl_usdt.toFixed(6)} USDT</span>
+                                    </div>
+                                    <div style="font-size: 12px; color: #cbd5e1;">${h.reason}</div>
+                                    <div class="trade-details">
+                                        <span>🕒 ${h.time}</span>
+                                        <span>Retorno: +${h.pnl_pct}%</span>
+                                    </div>
+                                </div>
+                            `;
+                        });
+                    }
                 });
         }
 
         function toggleBot() {
             fetch('/api/toggle', { method: 'POST' })
-                .then(res => {
-                    if (!res.ok) return res.json().then(err => { throw new Error(err.error); });
-                    return res.json();
-                })
+                .then(res => res.json())
                 .then(data => updateUI())
-                .catch(err => alert(err.message || 'Erro: Configure as chaves API primeiro.'));
+                .catch(err => alert('Erro ao alternar estado.'));
         }
 
         function saveSettings() {
@@ -278,14 +306,13 @@
             .then(res => res.json())
             .then(data => {
                 alert(data.message);
-                // Recarrega a página automaticamente para atualizar todos os pontos instantaneamente
                 location.reload();
             })
             .catch(err => alert('Erro ao guardar definições.'));
         }
 
         updateUI();
-        setInterval(updateUI, 5000);
+        setInterval(updateUI, 2000);
     </script>
 </body>
 </html>
