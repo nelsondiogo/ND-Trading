@@ -62,7 +62,7 @@
                 </div>
             </div>
 
-            <!-- Gráfico posicionado logo abaixo das informações iniciais -->
+            <!-- Gráfico abaixo das informações iniciais -->
             <div class="card" style="margin-bottom: 15px;">
                 <div class="card-title" style="margin-bottom: 10px;">Trajetória do Ativo em Operação</div>
                 <canvas id="equityChart" width="100%" height="180"></canvas>
@@ -75,7 +75,7 @@
         <div id="tab-mercado" class="tab-content">
             <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; font-weight: bold;">Mercado Scalping (4 Pares)</div>
             <div id="market-list">
-                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado.</div>
+                <div style="text-align: center; color: #94a3b8; padding: 20px; font-size: 13px;">Insira as chaves API em Ajustes para carregar o mercado da corretora.</div>
             </div>
         </div>
 
@@ -142,25 +142,6 @@
             btn.classList.add('active');
         }
 
-        const zeroLinePlugin = {
-            id: 'zeroLinePlugin',
-            afterDraw(chart) {
-                const { ctx, chartArea: { left, right, top, bottom }, scales: { y } } = chart;
-                const zeroY = y.getPixelForValue(0.1845);
-                if (zeroY >= top && zeroY <= bottom) {
-                    ctx.save();
-                    ctx.strokeStyle = '#eab308';
-                    ctx.lineWidth = 1.5;
-                    ctx.setLineDash([4, 4]);
-                    ctx.beginPath();
-                    ctx.moveTo(left, zeroY);
-                    ctx.lineTo(right, zeroY);
-                    ctx.stroke();
-                    ctx.restore();
-                }
-            }
-        };
-
         const ctx = document.getElementById('equityChart').getContext('2d');
         const equityChart = new Chart(ctx, {
             type: 'line',
@@ -182,15 +163,9 @@
                 plugins: { legend: { display: false } },
                 scales: {
                     x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } },
-                    y: { 
-                        ticks: { color: '#94a3b8', font: { size: 10 } }, 
-                        grid: { color: '#1f2937' },
-                        min: 0.1835,
-                        max: 0.1855
-                    }
+                    y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } }
                 }
-            },
-            plugins: [zeroLinePlugin]
+            }
         });
 
         function updateUI() {
@@ -226,7 +201,7 @@
                         btn.className = "btn-action btn-start";
                     }
 
-                    if (data.market) {
+                    if (data.market && data.market.length > 0) {
                         const marketList = document.getElementById('market-list');
                         marketList.innerHTML = '';
                         data.market.forEach(item => {
@@ -274,7 +249,7 @@
         }
 
         updateUI();
-        setInterval(updateUI, 3000);
+        setInterval(updateUI, 5000);
     </script>
 </body>
 </html>
