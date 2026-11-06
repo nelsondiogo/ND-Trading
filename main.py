@@ -17,7 +17,7 @@ bot_state = {
     "initial_balance": 0.0,
     "balance": 0.0,
     "realized_pnl": 0.0,
-    "active_position": None,  # Exemplo: {"pair": "ADA", "symbol": "ADA/USDT:USDT", "side": "LONG", "entry": 0.18, "highest_price": 0.18, "trailing_active": False}
+    "active_position": None,
     "market_data": [],
     "history": [],
     "log": "Aguardando chaves API..."
@@ -25,10 +25,9 @@ bot_state = {
 
 PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
 
-# Parâmetros de Gestão Institucional de Risco
 TAKE_PROFIT_PCT = 0.045     # 4.5%
 STOP_LOSS_PCT = 0.012       # 1.2%
-TRAILING_ACTIVATE_PCT = 0.005 # 0.5% para ativar muralha
+TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -364,28 +363,28 @@ def background_loop():
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
-                # 1. ANÁLISE DE MERCADO MULTITIMEFRAME (5m e 15m)
+                # 1. ANÁLISE DE MERCADO MULTITIMEFRAME (5m e 15m) COM RESOLUÇÃO ROBUSTA DE SÍMBOLOS
                 market_list = []
                 for base_pair in PAIRS:
                     symbol = base_pair
-                    if symbol not in exchange.markets and f"{base_pair}:USDT" in exchange.markets:
-                        symbol = f"{base_pair}:USDT"
-                    
+                    if symbol not in exchange.markets:
+                        if f"{base_pair}:USDT" in exchange.markets:
+                            symbol = f"{base_pair}:USDT"
+                        elif f"{base_pair}/USDT:USDT" in exchange.markets:
+                            symbol = f"{base_pair}/USDT:USDT"
+
                     try:
                         ticker = exchange.fetch_ticker(symbol)
                         current_price = ticker.get('last', 0.0)
                         
-                        # Velas de 5 minutos (Estrutura)
                         ohlcv_5m = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
                         closes_5m = [c[4] for c in ohlcv_5m]
                         rsi_5m = calculate_rsi(closes_5m)
                         
-                        # Velas de 15 minutos (Tendência Principal)
                         ohlcv_15m = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
                         closes_15m = [c[4] for c in ohlcv_15m]
                         rsi_15m = calculate_rsi(closes_15m)
 
-                        # Sinal alinhado em múltiplos prazos
                         if rsi_5m < 35 and rsi_15m < 45:
                             trend = "LONG"
                         elif rsi_5m > 65 and rsi_15m > 55:
@@ -411,7 +410,6 @@ def background_loop():
                 if bot_state["running"]:
                     pos = bot_state["active_position"]
                     
-                    # SE JÁ EXISTE UMA POSIÇÃO ATIVA -> GERIR TRAILING E ALVOS
                     if pos:
                         symbol = pos["symbol"]
                         ticker = exchange.fetch_ticker(symbol)
@@ -419,7 +417,6 @@ def background_loop():
                         entry_price = pos["entry"]
                         side = pos["side"]
 
-                        # Cálculo de PNL Não-Realizado (%)
                         if side == "LONG":
                             pnl_pct = (current_price - entry_price) / entry_price
                         else:
@@ -434,16 +431,14 @@ def background_loop():
                                 pos["highest_price"] = current_price
                                 bot_state["log"] = f"Muralha ativada em {pos['pair']} (+{pnl_pct*100:.2f}%)!"
 
-                        # B. ATUALIZAÇÃO DO PONTO MÁXIMO (CUME DO PREÇO)
+                        # B. ATUALIZAÇÃO DO PONTO MÁXIMO E RECUO RIGOROSO
                         if pos["trailing_active"]:
                             if side == "LONG" and current_price > pos["highest_price"]:
                                 pos["highest_price"] = current_price
                             elif side == "SHORT" and current_price < pos["highest_price"]:
                                 pos["highest_price"] = current_price
 
-                            # SE HOUVER QUALQUER RECUO CONTRA O CUME -> FECHO RIGOROSO
                             if side == "LONG" and current_price < pos["highest_price"]:
-                                # Fecho Imediato por Recuo
                                 bot_state["log"] = f"Muralha acionada! Fechando {pos['pair']} por recuo do topo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
@@ -485,7 +480,6 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
 
-                    # SE NÃO HÁ POSIÇÃO -> PROCURAR SINAL ALINHADO EM 5M E 15M
                     else:
                         for item in market_list:
                             if item["trend"] in ["LONG", "SHORT"]:
@@ -504,7 +498,7 @@ def background_loop():
         except Exception as e:
             logging.error(f"Erro no loop de operação: {e}")
         
-        time.sleep(3) # Ciclo de alta frequência (3s) para trailing rigoroso
+        time.sleep(3)
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
