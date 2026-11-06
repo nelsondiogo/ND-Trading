@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING | Terminal Institucional</title>
+    <title>ND-SCALPING</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -18,6 +18,7 @@
         .card-value { font-size: 18px; font-weight: bold; }
         .text-green { color: #22c55e; }
         .text-red { color: #ef4444; }
+        .text-yellow { color: #eab308; }
 
         .filter-box { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border: 1px solid #334155; }
         .filter-box input { background: #0f172a; border: 1px solid #475569; color: #fff; padding: 6px 10px; border-radius: 5px; font-size: 12px; flex: 1; min-width: 70px; }
@@ -25,6 +26,12 @@
         .trade-item { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #38bdf8; font-size: 13px; }
         .trade-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px; }
         .trade-details { font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; margin-top: 4px; border-top: 1px solid #334155; padding-top: 4px; }
+
+        .market-card { background: #1e293b; padding: 12px 15px; border-radius: 8px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #334155; }
+        
+        .form-group { margin-bottom: 12px; text-align: left; }
+        .form-group label { display: block; font-size: 11px; color: #94a3b8; margin-bottom: 4px; text-transform: uppercase; }
+        .form-group input { width: 100%; background: #0f172a; border: 1px solid #475569; color: #fff; padding: 8px 10px; border-radius: 5px; font-size: 13px; }
 
         nav { position: fixed; bottom: 0; left: 0; width: 100%; background: #111827; display: flex; justify-content: space-around; padding: 12px 0; border-top: 1px solid #1f2937; z-index: 1000; }
         nav button { background: none; border: none; color: #94a3b8; font-size: 12px; cursor: pointer; font-weight: 600; }
@@ -35,11 +42,13 @@
         
         .btn-action { width: 100%; padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; margin-top: 15px; font-size: 14px; }
         .btn-stop { background: #ef4444; color: white; }
+        .btn-start { background: #22c55e; color: white; }
+        .btn-save { background: #38bdf8; color: #0b0f19; }
     </style>
 </head>
 <body>
 
-    <header>ND-SCALPING | INSTITUTIONAL TERMINAL</header>
+    <header>ND-SCALPING</header>
 
     <div class="container">
 
@@ -60,27 +69,49 @@
                 </div>
             </div>
 
+            <!-- Gráfico na parte inferior -->
             <div class="card" style="margin-bottom: 15px;">
                 <div class="card-title" style="margin-bottom: 10px;">Evolução da Conta & PnL Acumulado</div>
                 <canvas id="equityChart" width="100%" height="150"></canvas>
             </div>
 
-            <button class="btn-action btn-stop" onclick="toggleBot()">PARAR ROBÔ</button>
+            <!-- Botão de Ligar/Desligar corrigido -->
+            <button id="toggle-btn" class="btn-action btn-stop" onclick="toggleBot()">PARAR ROBÔ</button>
         </div>
 
-        <!-- TAB MERCADO -->
+        <!-- TAB MERCADO (Apenas os pares com subida, descida ou neutro, sem saldo) -->
         <div id="tab-mercado" class="tab-content">
-            <div class="card-grid" style="margin-bottom: 15px;">
-                <div class="card">
-                    <div class="card-title">Saldo em Mercado</div>
-                    <div class="card-value" id="market-balance">+0.345210 USDT</div>
+            <div style="font-size: 12px; color: #94a3b8; text-transform: uppercase; margin-bottom: 10px; font-weight: bold;">Mercado Scalping (4 Pares)</div>
+            <div id="market-list">
+                <div class="market-card">
+                    <div>
+                        <div style="font-weight: bold; font-size: 14px;">ADA</div>
+                        <div style="font-size: 11px; color: #94a3b8;">Preço: 0.1845 | RSI: 45.0</div>
+                    </div>
+                    <span class="text-yellow" style="font-size: 12px; font-weight: bold;">NEUTRO</span>
                 </div>
-                <div class="card">
-                    <div class="card-title">Ativos Ativos</div>
-                    <div class="card-value">4 Pares</div>
+                <div class="market-card">
+                    <div>
+                        <div style="font-weight: bold; font-size: 14px;">TRX</div>
+                        <div style="font-size: 11px; color: #94a3b8;">Preço: 0.3182 | RSI: 52.0</div>
+                    </div>
+                    <span class="text-green" style="font-size: 12px; font-weight: bold;">SUBIDA</span>
+                </div>
+                <div class="market-card">
+                    <div>
+                        <div style="font-weight: bold; font-size: 14px;">NEAR</div>
+                        <div style="font-size: 11px; color: #94a3b8;">Preço: 3.719 | RSI: 38.0</div>
+                    </div>
+                    <span class="text-red" style="font-size: 12px; font-weight: bold;">DESCIDA</span>
+                </div>
+                <div class="market-card">
+                    <div>
+                        <div style="font-weight: bold; font-size: 14px;">LTC</div>
+                        <div style="font-size: 11px; color: #94a3b8;">Preço: 52.78 | RSI: 49.0</div>
+                    </div>
+                    <span class="text-yellow" style="font-size: 12px; font-weight: bold;">NEUTRO</span>
                 </div>
             </div>
-            <div id="market-list"></div>
         </div>
 
         <!-- TAB HISTÓRICO -->
@@ -95,7 +126,7 @@
                     <div class="card-value text-red" id="total-losses">0.0000 USDT</div>
                 </div>
                 <div class="card card-full" style="background: #0f172a; border-color: #38bdf8;">
-                    <div class="card-title">Resultado Líquido Global (O Principal)</div>
+                    <div class="card-title">Resultado Líquido Global</div>
                     <div class="card-value text-green" id="net-result">+0.0044 USDT (LUCRO)</div>
                 </div>
             </div>
@@ -122,11 +153,23 @@
             </div>
         </div>
 
-        <!-- TAB AJUSTES -->
+        <!-- TAB AJUSTES (API Key, Secret Key e Alavancagem) -->
         <div id="tab-ajustes" class="tab-content">
-            <div class="card">
-                <div class="card-title">Configurações do Motor</div>
-                <p style="font-size: 12px; color: #94a3b8; margin-top: 10px;">Take Profit: 4.5% | Stop Loss: 1.2% | Ratchet Absoluto Ativo</p>
+            <div class="card" style="text-align: left;">
+                <div class="card-title" style="margin-bottom: 15px; text-align: center;">Configuração de API & Alavancagem</div>
+                <div class="form-group">
+                    <label>Bybit API Key:</label>
+                    <input type="text" id="api-key" placeholder="Insira a sua API Key">
+                </div>
+                <div class="form-group">
+                    <label>Bybit API Secret:</label>
+                    <input type="password" id="api-secret" placeholder="Insira a sua API Secret">
+                </div>
+                <div class="form-group">
+                    <label>Alavancagem:</label>
+                    <input type="number" id="leverage" value="17" min="1" max="50">
+                </div>
+                <button class="btn-action btn-save" onclick="saveSettings()">Guardar Definições</button>
             </div>
         </div>
 
@@ -172,6 +215,42 @@
             }
         });
 
+        function toggleBot() {
+            fetch('/api/toggle', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => {
+                    const btn = document.getElementById('toggle-btn');
+                    const status = document.getElementById('dash-status');
+                    if (data.running) {
+                        btn.innerText = "PARAR ROBÔ";
+                        btn.className = "btn-action btn-stop";
+                        status.innerText = "OPERANDO (4 PARES DE ELITE)";
+                        status.className = "card-value text-green";
+                    } else {
+                        btn.innerText = "INICIAR ROBÔ";
+                        btn.className = "btn-action btn-start";
+                        status.innerText = "ROBÔ PARADO";
+                        status.className = "card-value text-red";
+                    }
+                })
+                .catch(err => alert('Erro ao comunicar com o servidor.'));
+        }
+
+        function saveSettings() {
+            const apiKey = document.getElementById('api-key').value;
+            const apiSecret = document.getElementById('api-secret').value;
+            const leverage = document.getElementById('leverage').value;
+
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key: apiKey, api_secret: apiSecret, leverage: leverage })
+            })
+            .then(res => res.json())
+            .then(data => alert(data.message))
+            .catch(err => alert('Erro ao guardar definições.'));
+        }
+
         function filterHistory() {
             const search = document.getElementById('filter-search').value.toUpperCase();
             const day = document.getElementById('filter-day').value;
@@ -179,7 +258,6 @@
             const year = document.getElementById('filter-year').value;
             
             const items = document.querySelectorAll('.trade-item');
-            
             items.forEach(item => {
                 const dateStr = item.getAttribute('data-date');
                 const pair = item.getAttribute('data-pair');
@@ -193,10 +271,6 @@
                 
                 item.style.display = match ? 'block' : 'none';
             });
-        }
-
-        function toggleBot() {
-            alert('Comando enviado com sucesso.');
         }
     </script>
 </body>
