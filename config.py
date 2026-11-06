@@ -1,16 +1,14 @@
 import os
 
-# 6 Pares leves de baixo custo por contrato, ideais para saldos reduzidos
+# 4 Pares mais estáveis e de baixo valor (Removidos DOGE e XRP devido aos ruídos e drawdowns passados)
 PAIRS = [
-    'DOGE/USDT:USDT',
-    'XRP/USDT:USDT',
     'ADA/USDT:USDT',
-    'PEPE/USDT:USDT',
-    'SHIB/USDT:USDT',
-    'TRX/USDT:USDT'
+    'TRX/USDT:USDT',
+    'NEAR/USDT:USDT',
+    'LTC/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2  # Varredura a cada 2 segundos (Alta Frequência)
+SCAN_INTERVAL = 2  # Varredura de alta frequência
 
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
