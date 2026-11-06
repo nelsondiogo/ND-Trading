@@ -2,7 +2,7 @@ import time
 import threading
 import logging
 import ccxt
-from flask import Flask, render_template, request, jsonify
+from flask import Flask, request, jsonify
 from config import load_config, save_config, PAIRS, are_keys_configured
 from trading_engine import TradingEngine
 
@@ -17,19 +17,9 @@ bot_state = {
     "balance": 0.2548,
     "initial_balance": 0.2548,
     "realized_pnl": 0.0,
-    "active_position": None,  # Operação estritamente de um par por vez
-    "log_message": "ND-SCALPING v8.5 Inicializado e Aguardando Chaves.",
-    "trades_history": [
-        {
-            "pair": "ADA",
-            "side": "LONG",
-            "pnl_usdt": 0.000170,
-            "pnl_pct": 0.92,
-            "reason": "Fechado via Take Profit 0.75% Atingido",
-            "time": "21:36",
-            "date": "2026-06-06"
-        }
-    ]
+    "active_position": None,
+    "log_message": "ND-SCALPING Ativo e Operacional.",
+    "trades_history": []
 }
 
 def get_exchange_client():
@@ -52,7 +42,13 @@ def get_exchange_client():
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    # Retorna uma resposta JSON direta para evitar erros de HTML em falta no servidor
+    return jsonify({
+        "bot": "ND-SCALPING",
+        "status": "Online",
+        "running": bot_state["running"],
+        "configured": are_keys_configured()
+    })
 
 @app.route('/api/status')
 def status():
@@ -102,12 +98,6 @@ def status():
                 })
         except Exception as e:
             logging.error(f"Erro Bybit API: {e}")
-            market_list = [
-                {"pair": "ADA", "price": 0.1845, "high": 0.1860, "low": 0.1830, "rsi": 45, "trend": "LONG"},
-                {"pair": "TRX", "price": 0.3182, "high": 0.3220, "low": 0.3150, "rsi": 52, "trend": "SHORT"},
-                {"pair": "NEAR", "price": 3.719, "high": 3.800, "low": 3.650, "rsi": 38, "trend": "NEUTRO"},
-                {"pair": "LTC", "price": 52.78, "high": 53.50, "low": 52.00, "rsi": 49, "trend": "LONG"}
-            ]
 
     leverage = cfg["LEVERAGE"]
     buying_power = balance_val * leverage
@@ -218,4 +208,3 @@ if __name__ == '__main__':
     t = threading.Thread(target=background_trading_loop, daemon=True)
     t.start()
     app.run(host='0.0.0.0', port=5000, debug=False)
-
