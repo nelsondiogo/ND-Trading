@@ -19,7 +19,7 @@ bot_state = {
     "realized_pnl": 0.0,
     "active_position": None,
     "market_data": [],
-    "history": [],  # Começa limpo, sem dados falsos
+    "history": [],
     "log": "Insira as chaves API na aba Ajustes para iniciar."
 }
 
@@ -68,9 +68,16 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
             document.getElementById('btn-' + tabId).classList.add('active');
+            localStorage.setItem('activeTab', tabId);
+        }
+
+        window.onload = function() {
+            let savedTab = localStorage.getItem('activeTab');
+            if (savedTab && document.getElementById(savedTab)) {
+                showTab(savedTab);
+            }
         }
     </script>
-    <meta http-equiv="refresh" content="15">
 </head>
 <body>
     <div class="container">
@@ -271,7 +278,7 @@ def index():
 def settings():
     key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
-    if key:
+    if key and key != "********":
         bot_state["api_key"] = key
     if secret and secret != "********":
         bot_state["api_secret"] = secret
@@ -281,7 +288,7 @@ def settings():
         pass
     
     bot_state["log"] = "Definições e alavancagem atualizadas com sucesso."
-    return redirect(url_for('index'))  # Redireciona corretamente para evitar o erro de página em branco
+    return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
@@ -304,7 +311,7 @@ def background_loop():
                     'options': {'defaultType': 'swap'}
                 })
                 
-                # Ler saldo real da Bybit apenas se as chaves estiverem presentes
+                # Leitura real do saldo da Bybit
                 bal = exchange.fetch_balance()
                 total = float(bal.get('total', {}).get('USDT', 0.0))
                 if total > 0:
@@ -312,7 +319,7 @@ def background_loop():
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
-                # Ler mercado e indicadores RSI
+                # Leitura do mercado e RSI em tempo real
                 market_list = []
                 for pair in PAIRS:
                     ticker = exchange.fetch_ticker(pair)
