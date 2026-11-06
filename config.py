@@ -16,7 +16,6 @@ TRAILING_ACTIVATION = 0.005 # 0.5% para ativar a trava móvel
 LEVERAGE = 17
 
 def load_config():
-    # Tenta carregar do ficheiro local de ajustes, com fallback para variáveis de ambiente
     settings = {}
     if os.path.exists(CONFIG_FILE):
         try:
