@@ -289,53 +289,50 @@ def index():
 def settings():
     key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
+    
     if key and key != "********":
         bot_state["api_key"] = key
-    if secret and secret != "********":
+        
+    # Proteção essencial: só altera o segredo se for uma chave nova real (evita gravar os asteriscos)
+    if secret and not secret.startswith("****") and secret != "********":
         bot_state["api_secret"] = secret
+        
     try:
         bot_state["leverage"] = int(request.form.get("leverage", 17))
     except ValueError:
         pass
     
-    bot_state["log"] = "Chaves atualizadas. A testar conexão UTA..."
+    bot_state["log"] = "Definições guardadas com sucesso."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes!"
+        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes primeiro!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e a operar." if bot_state["running"] else "Robô parado manualmente."
     return redirect(url_for('index'))
 
 def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
-                # Configuração explícita para Conta Unificada (UTA) da Bybit
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'enableRateLimit': True,
-                    'options': {
-                        'defaultType': 'linear',
-                        'adjustForTimeDifference': True
-                    }
+                    'options': {'defaultType': 'linear'}
                 })
                 
                 exchange.load_markets()
-                
-                # Leitura robusta adaptada para Conta Unificada (UTA) e Derivativos Bybit
                 bal = exchange.fetch_balance()
                 total = 0.0
                 
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
                     total = float(bal['total']['USDT'])
                 elif 'info' in bal and isinstance(bal['info'], dict):
-                    # Compatibilidade direta com o payload bruto da UTA Bybit V5
                     result_list = bal['info'].get('result', {}).get('list', [])
                     if result_list:
                         coin_list = result_list[0].get('coin', [])
@@ -384,12 +381,12 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
-                    bot_state["log"] = f"Conectado UTA! Saldo: {total:.4f} USDT"
+                    bot_state["log"] = f"Ligado à Bybit! Saldo: {total:.4f} USDT"
 
         except Exception as e:
             err_msg = str(e)
-            logging.error(f"Erro Bybit UTA: {err_msg}")
-            bot_state["log"] = f"Erro API: {err_msg[:60]}"
+            logging.error(f"Erro Bybit: {err_msg}")
+            bot_state["log"]` = f"Erro API: {err_msg[:60]}"
         
         time.sleep(10)
 
