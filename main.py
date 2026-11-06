@@ -63,7 +63,7 @@ HTML_TEMPLATE = """
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
-        .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; word-break: break-all; }
+        .log-box { background: #0f172a; border-left: 4px solid #38bdf8; padding: 10px; border-radius: 6px; font-size: 12px; color: #cbd5e1; word-break: break-all; max-height: 100px; overflow-y: auto; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
         .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
     </style>
@@ -298,7 +298,7 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Chaves guardadas. A conectar à Bybit..."
+    bot_state["log"] = "Chaves guardadas. A testar ligação à Bybit..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -315,7 +315,6 @@ def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
-                # Configuração otimizada para Bybit Futures (Linear Swap)
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
@@ -323,10 +322,7 @@ def background_loop():
                     'options': {'defaultType': 'linear'}
                 })
                 
-                # Carregar mercados obrigatoriamente para evitar erros de símbolos no CCXT
-                exchange.load_markets()
-
-                # Leitura correta do saldo na Bybit
+                # Teste direto de saldo na Bybit
                 bal = exchange.fetch_balance()
                 total = 0.0
                 if 'total' in bal and 'USDT' in bal['total']:
@@ -334,11 +330,10 @@ def background_loop():
                 elif 'free' in bal and 'USDT' in bal['free']:
                     total = float(bal['free']['USDT']) + float(bal.get('used', {}).get('USDT', 0.0))
                 
-                if total > 0:
+                if total >= 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
-                    bot_state["log"] = f"Conectado com sucesso! Saldo: {total:.4f} USDT"
 
                 # Leitura do mercado e RSI em tempo real
                 market_list = []
@@ -378,11 +373,12 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
+                    bot_state["log"] = f"Sincronizado! Saldo: {total:.4f} USDT | Ativos: {len(market_list)}"
 
         except Exception as e:
             err_msg = str(e)
             logging.error(f"Erro na ligação à Bybit: {err_msg}")
-            bot_state["log"] = f"Erro API: {err_msg[:45]}"
+            bot_state["log"] = f"ERRO BYBIT: {err_msg[:90]}"
         
         time.sleep(10)
 
