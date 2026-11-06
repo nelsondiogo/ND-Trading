@@ -298,7 +298,7 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Chaves atualizadas. A testar conexão..."
+    bot_state["log"] = "Chaves atualizadas. A testar conexão UTA..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -315,21 +315,38 @@ def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
+                # Configuração explícita para Conta Unificada (UTA) da Bybit
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'enableRateLimit': True,
-                    'options': {'defaultType': 'linear'}
+                    'options': {
+                        'defaultType': 'linear',
+                        'adjustForTimeDifference': True
+                    }
                 })
                 
                 exchange.load_markets()
+                
+                # Leitura robusta adaptada para Conta Unificada (UTA) e Derivativos Bybit
                 bal = exchange.fetch_balance()
                 total = 0.0
-                if 'total' in bal and 'USDT' in bal['total']:
-                    total = float(bal['total']['USDT'])
-                elif 'free' in bal and 'USDT' in bal['free']:
-                    total = float(bal['free']['USDT']) + float(bal.get('used', {}).get('USDT', 0.0))
                 
+                if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
+                    total = float(bal['total']['USDT'])
+                elif 'info' in bal and isinstance(bal['info'], dict):
+                    # Compatibilidade direta com o payload bruto da UTA Bybit V5
+                    result_list = bal['info'].get('result', {}).get('list', [])
+                    if result_list:
+                        coin_list = result_list[0].get('coin', [])
+                        for coin in coin_list:
+                            if coin.get('coin') == 'USDT':
+                                total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
+                                break
+                
+                if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
+                    total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
+
                 if total >= 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
@@ -367,11 +384,11 @@ def background_loop():
 
                 if market_list:
                     bot_state["market_data"] = market_list
-                    bot_state["log"] = f"Sincronizado! Saldo: {total:.4f} USDT"
+                    bot_state["log"] = f"Conectado UTA! Saldo: {total:.4f} USDT"
 
         except Exception as e:
             err_msg = str(e)
-            logging.error(f"Erro Bybit: {err_msg}")
+            logging.error(f"Erro Bybit UTA: {err_msg}")
             bot_state["log"] = f"Erro API: {err_msg[:60]}"
         
         time.sleep(10)
