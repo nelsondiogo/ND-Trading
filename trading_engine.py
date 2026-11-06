@@ -54,7 +54,7 @@ class TradingEngine:
     def evaluate_signal(self, indicators):
         """
         Entrada com Rigor Institucional Máximo:
-        Exige alinhamento de EMAs, velas consecutivas firmes e RSI estrito para banir falsos rompimentos.
+        Exige alinhamento de EMAs, velas consecutivas firmes e RSI restrito para banir falsos rompimentos.
         """
         if not indicators:
             return None
@@ -92,18 +92,18 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Gestão de Risco e Saída Corporativa:
-        1. Take Profit Firme em 3.0% alavancado.
-        2. Stop Loss Técnico Inicial de 1.2% (dá folga para o mercado corrigir).
-        3. Break-Even ativado a +0.5% (risco zero a partir desse ponto).
-        4. Trailing Stop de Degraus acompanhando o lucro máximo (fecha imediatamente se tentar recuar do cume).
+        Gestão de Risco e Saída Corporativa (Trailing Ratchet Puro):
+        1. Take Profit Institucional em 4.5% alavancado.
+        2. Stop Loss Técnico Inicial de 1.2% (dá folga para o mercado corrigir o preço).
+        3. Trailing Stop Absoluto (Ratchet): A partir de +0.5%, o stop crava no pico máximo atingido. 
+           Se o preço recuar do cume sequer um tique, fecha a ordem de imediato sem perder o lucro.
         """
         leveraged_pnl = pnl_pct * leverage
         leveraged_max_profit = max_profit_reached * leverage
 
-        # 1. Take Profit Institucional em 3.0%
-        if leveraged_pnl >= 0.03:
-            return True, f"Take Profit Institucional 3.0% Atingido ({leveraged_pnl*100:.2f}%)"
+        # 1. Take Profit Institucional em 4.5%
+        if leveraged_pnl >= 0.045:
+            return True, f"Take Profit Institucional 4.5% Atingido ({leveraged_pnl*100:.2f}%)"
 
         # 2. Stop Loss Técnico com folga de 1.2% para absorção de volatilidade inicial
         if leveraged_pnl <= -0.012:
@@ -113,12 +113,12 @@ class TradingEngine:
         if pnl_pct < 0:
             return False, None
 
-        # 3. Trailing Stop Dinâmico & Break-Even a partir de +0.5%
+        # 3. Trailing Stop Absoluto / Ratchet Puro (Só sobe, nunca desce)
+        # Assim que o lucro máximo atinge ou passa de +0.5% (+0.005 alavancado), o stop assume o valor do topo.
         if leveraged_max_profit >= 0.005:
-            # Assim que passa de +0.5%, o piso de proteção sobe (garantindo zero prejuízo e trancando os degraus de lucro)
-            lock_in_threshold = max(0.0, leveraged_max_profit * 0.75)
-            if leveraged_pnl < lock_in_threshold:
-                return True, f"Trailing Stop Dinâmico (Degrau Protegido - Pico: {leveraged_max_profit*100:.2f}%)"
+            # Se o PnL atual ficar abaixo do pico histórico da operação, fecha no instante.
+            if leveraged_pnl < leveraged_max_profit:
+                return True, f"Trailing Stop Absoluto (Pico Trancado: {leveraged_max_profit*100:.2f}%)"
 
         # 4. Mudança de Direção com Lucro Garantido
         if active_side == 'LONG' and current_signal == 'SHORT' and leveraged_pnl > 0:
