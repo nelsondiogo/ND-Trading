@@ -48,11 +48,11 @@
             <div class="card-grid">
                 <div class="card">
                     <div class="card-title">Capital Inicial</div>
-                    <div class="card-value" id="dash-initial">+0.255096 USDT</div>
+                    <div class="card-value" id="dash-initial">+0.330964 USDT</div>
                 </div>
                 <div class="card">
                     <div class="card-title">Capital Atual</div>
-                    <div class="card-value text-green" id="dash-current">+0.255096 USDT</div>
+                    <div class="card-value text-green" id="dash-current">+0.345210 USDT</div>
                 </div>
                 <div class="card card-full">
                     <div class="card-title">Estado do Motor</div>
@@ -68,12 +68,12 @@
             <button class="btn-action btn-stop" onclick="toggleBot()">PARAR ROBÔ</button>
         </div>
 
-        <!-- TAB MERCADO (Saldo Principal visível estritamente aqui e no Dashboard) -->
+        <!-- TAB MERCADO -->
         <div id="tab-mercado" class="tab-content">
             <div class="card-grid" style="margin-bottom: 15px;">
                 <div class="card">
                     <div class="card-title">Saldo em Mercado</div>
-                    <div class="card-value" id="market-balance">+0.255096 USDT</div>
+                    <div class="card-value" id="market-balance">+0.345210 USDT</div>
                 </div>
                 <div class="card">
                     <div class="card-title">Ativos Ativos</div>
@@ -83,14 +83,12 @@
             <div id="market-list"></div>
         </div>
 
-        <!-- TAB HISTÓRICO (Sem saldo principal, focado em ganhos/perdas e filtros) -->
+        <!-- TAB HISTÓRICO -->
         <div id="tab-historico" class="tab-content">
-            
-            <!-- Cards de Estatísticas com Contagem e Totais -->
             <div class="card-grid">
                 <div class="card">
-                    <div class="card-title">Total Ganhos (<span id="win-count">0</span>)</div>
-                    <div class="card-value text-green" id="total-gains">+0.0000 USDT</div>
+                    <div class="card-title">Total Ganhos (<span id="win-count">2</span>)</div>
+                    <div class="card-value text-green" id="total-gains">+0.0044 USDT</div>
                 </div>
                 <div class="card">
                     <div class="card-title">Total Perdas (<span id="loss-count">0</span>)</div>
@@ -98,11 +96,10 @@
                 </div>
                 <div class="card card-full" style="background: #0f172a; border-color: #38bdf8;">
                     <div class="card-title">Resultado Líquido Global (O Principal)</div>
-                    <div class="card-value text-green" id="net-result">0.0000 USDT (NEUTRO)</div>
+                    <div class="card-value text-green" id="net-result">+0.0044 USDT (LUCRO)</div>
                 </div>
             </div>
 
-            <!-- Filtros Editáveis (Data e Ativo) -->
             <div class="filter-box">
                 <input type="text" id="filter-search" placeholder="Ativo (ex: ADA)" onkeyup="filterHistory()">
                 <input type="text" id="filter-day" placeholder="Dia (DD)" maxlength="2" onkeyup="filterHistory()">
@@ -110,17 +107,16 @@
                 <input type="text" id="filter-year" placeholder="Ano (AAAA)" maxlength="4" onkeyup="filterHistory()">
             </div>
 
-            <!-- Lista de Trades Fechados com Exibição Exata de Horas H:M:S -->
             <div id="history-list">
-                <div class="trade-item" data-date="2026-11-06" data-pair="ADA">
+                <div class="trade-item" data-date="2026-06-06" data-pair="ADA">
                     <div class="trade-header">
                         <span>ADA (LONG)</span>
-                        <span class="text-green">+0.0000 USDT (0.00%)</span>
+                        <span class="text-green">+0.0007 USDT (+3.70%)</span>
                     </div>
-                    <div style="font-size: 12px; color: #cbd5e1;">Aguardando primeira execução com 4 Pares</div>
+                    <div style="font-size: 12px; color: #cbd5e1;">Fechado via Take Profit Institucional</div>
                     <div class="trade-details">
-                        <span>🕒 H:M:S (--:--:--)</span>
-                        <span>Retorno: 0.00%</span>
+                        <span>🕒 09:23:35</span>
+                        <span>Retorno: +3.70%</span>
                     </div>
                 </div>
             </div>
@@ -155,10 +151,10 @@
         const equityChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: ['10:00', '10:15', '10:30', '10:47'],
+                labels: ['07:00', '08:00', '09:00', '09:37'],
                 datasets: [{
                     label: 'Capital (USDT)',
-                    data: [0.2550, 0.2550, 0.2550, 0.2550],
+                    data: [0.3309, 0.3350, 0.3400, 0.3452],
                     borderColor: '#38bdf8',
                     backgroundColor: 'rgba(56, 189, 248, 0.1)',
                     borderWidth: 2,
@@ -185,9 +181,8 @@
             const items = document.querySelectorAll('.trade-item');
             
             items.forEach(item => {
-                const dateStr = item.getAttribute('data-date'); // YYYY-MM-DD
+                const dateStr = item.getAttribute('data-date');
                 const pair = item.getAttribute('data-pair');
-                
                 const [itemYear, itemMonth, itemDay] = dateStr.split('-');
                 
                 let match = true;
