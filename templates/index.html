@@ -1,1 +1,209 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ND-SCALPING | Terminal Institucional</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: #0b0f19; color: #f1f5f9; padding-bottom: 70px; }
+        header { background: #111827; padding: 15px; text-align: center; border-bottom: 1px solid #1f2937; font-weight: bold; font-size: 16px; color: #38bdf8; letter-spacing: 1px; }
+        .container { padding: 15px; max-width: 600px; margin: 0 auto; }
+        
+        .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .card { background: #1e293b; padding: 15px; border-radius: 10px; border: 1px solid #334155; text-align: center; }
+        .card-full { grid-column: span 2; }
+        .card-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; margin-bottom: 5px; }
+        .card-value { font-size: 18px; font-weight: bold; }
+        .text-green { color: #22c55e; }
+        .text-red { color: #ef4444; }
+
+        .filter-box { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border: 1px solid #334155; }
+        .filter-box input { background: #0f172a; border: 1px solid #475569; color: #fff; padding: 6px 10px; border-radius: 5px; font-size: 12px; flex: 1; min-width: 70px; }
+        
+        .trade-item { background: #1e293b; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #38bdf8; font-size: 13px; }
+        .trade-header { display: flex; justify-content: space-between; font-weight: bold; margin-bottom: 4px; }
+        .trade-details { font-size: 11px; color: #94a3b8; display: flex; justify-content: space-between; margin-top: 4px; border-top: 1px solid #334155; padding-top: 4px; }
+
+        nav { position: fixed; bottom: 0; left: 0; width: 100%; background: #111827; display: flex; justify-content: space-around; padding: 12px 0; border-top: 1px solid #1f2937; z-index: 1000; }
+        nav button { background: none; border: none; color: #94a3b8; font-size: 12px; cursor: pointer; font-weight: 600; }
+        nav button.active { color: #38bdf8; }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .btn-action { width: 100%; padding: 12px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; margin-top: 15px; font-size: 14px; }
+        .btn-stop { background: #ef4444; color: white; }
+    </style>
+</head>
+<body>
+
+    <header>ND-SCALPING | INSTITUTIONAL TERMINAL</header>
+
+    <div class="container">
+
+        <!-- TAB DASHBOARD -->
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-title">Capital Inicial</div>
+                    <div class="card-value" id="dash-initial">+0.330964 USDT</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Capital Atual</div>
+                    <div class="card-value text-green" id="dash-current">+0.345210 USDT</div>
+                </div>
+                <div class="card card-full">
+                    <div class="card-title">Estado do Motor</div>
+                    <div class="card-value text-green" id="dash-status">OPERANDO (4 PARES DE ELITE)</div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-bottom: 15px;">
+                <div class="card-title" style="margin-bottom: 10px;">Evolução da Conta & PnL Acumulado</div>
+                <canvas id="equityChart" width="100%" height="150"></canvas>
+            </div>
+
+            <button class="btn-action btn-stop" onclick="toggleBot()">PARAR ROBÔ</button>
+        </div>
+
+        <!-- TAB MERCADO -->
+        <div id="tab-mercado" class="tab-content">
+            <div class="card-grid" style="margin-bottom: 15px;">
+                <div class="card">
+                    <div class="card-title">Saldo em Mercado</div>
+                    <div class="card-value" id="market-balance">+0.345210 USDT</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Ativos Ativos</div>
+                    <div class="card-value">4 Pares</div>
+                </div>
+            </div>
+            <div id="market-list"></div>
+        </div>
+
+        <!-- TAB HISTÓRICO -->
+        <div id="tab-historico" class="tab-content">
+            
+            <!-- Cards de Estatísticas com Contagem e Totais -->
+            <div class="card-grid">
+                <div class="card">
+                    <div class="card-title">Total Ganhos (<span id="win-count">2</span>)</div>
+                    <div class="card-value text-green" id="total-gains">+0.0044 USDT</div>
+                </div>
+                <div class="card">
+                    <div class="card-title">Total Perdas (<span id="loss-count">0</span>)</div>
+                    <div class="card-value text-red" id="total-losses">0.0000 USDT</div>
+                </div>
+                <div class="card card-full" style="background: #0f172a; border-color: #38bdf8;">
+                    <div class="card-title">Resultado Líquido Global (O Principal)</div>
+                    <div class="card-value text-green" id="net-result">+0.0044 USDT (LUCRO)</div>
+                </div>
+            </div>
+
+            <!-- Filtros de Data Editáveis e Busca por Ativo -->
+            <div class="filter-box">
+                <input type="text" id="filter-search" placeholder="Ativo (ex: ADA)" onkeyup="filterHistory()">
+                <input type="text" id="filter-day" placeholder="Dia (DD)" maxlength="2" onkeyup="filterHistory()">
+                <input type="text" id="filter-month" placeholder="Mês (MM)" maxlength="2" onkeyup="filterHistory()">
+                <input type="text" id="filter-year" placeholder="Ano (AAAA)" maxlength="4" onkeyup="filterHistory()">
+            </div>
+
+            <!-- Lista de Trades Fechados com Formato de Horas H:M:S -->
+            <div id="history-list">
+                <div class="trade-item" data-date="2026-06-06" data-pair="ADA">
+                    <div class="trade-header">
+                        <span>ADA (LONG)</span>
+                        <span class="text-green">+0.0007 USDT (+3.70%)</span>
+                    </div>
+                    <div style="font-size: 12px; color: #cbd5e1;">Fechado via Take Profit Institucional</div>
+                    <div class="trade-details">
+                        <span>🕒 H:M:S (09:23:35)</span>
+                        <span>Retorno: +3.70%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB AJUSTES -->
+        <div id="tab-ajustes" class="tab-content">
+            <div class="card">
+                <div class="card-title">Configurações do Motor</div>
+                <p style="font-size: 12px; color: #94a3b8; margin-top: 10px;">Take Profit: 4.5% | Stop Loss: 1.2% | Ratchet Absoluto Ativo</p>
+            </div>
+        </div>
+
+    </div>
+
+    <nav>
+        <button onclick="switchTab('dashboard', this)" class="active">Dashboard</button>
+        <button onclick="switchTab('mercado', this)">Mercado</button>
+        <button onclick="switchTab('historico', this)">Histórico</button>
+        <button onclick="switchTab('ajustes', this)">Ajustes</button>
+    </nav>
+
+    <script>
+        function switchTab(tabName, btn) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('nav button').forEach(el => el.classList.remove('active'));
+            document.getElementById('tab-' + tabName).classList.add('active');
+            btn.classList.add('active');
+        }
+
+        const ctx = document.getElementById('equityChart').getContext('2d');
+        const equityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['07:00', '08:00', '09:00', '09:37'],
+                datasets: [{
+                    label: 'Capital (USDT)',
+                    data: [0.3309, 0.3350, 0.3400, 0.3452],
+                    borderColor: '#38bdf8',
+                    backgroundColor: 'rgba(56, 189, 248, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } },
+                    y: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { color: '#1f2937' } }
+                }
+            }
+        });
+
+        function filterHistory() {
+            const search = document.getElementById('filter-search').value.toUpperCase();
+            const day = document.getElementById('filter-day').value;
+            const month = document.getElementById('filter-month').value;
+            const year = document.getElementById('filter-year').value;
+            
+            const items = document.querySelectorAll('.trade-item');
+            
+            items.forEach(item => {
+                const dateStr = item.getAttribute('data-date'); // YYYY-MM-DD
+                const pair = item.getAttribute('data-pair');
+                
+                const [itemYear, itemMonth, itemDay] = dateStr.split('-');
+                
+                let match = true;
+                if (search && !pair.includes(search)) match = false;
+                if (day && itemDay !== day) match = false;
+                if (month && itemMonth !== month) match = false;
+                if (year && itemYear !== year) match = false;
+                
+                item.style.display = match ? 'block' : 'none';
+            });
+        }
+
+        function toggleBot() {
+            alert('Comando enviado com sucesso.');
+        }
+    </script>
+</body>
+</html>
 
