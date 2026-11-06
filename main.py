@@ -17,7 +17,7 @@ bot_state = {
     "balance": 0.2548,
     "initial_balance": 0.2548,
     "realized_pnl": 0.0,
-    "active_position": None,  # Garante estritamente apenas UM par por vez
+    "active_position": None,  # Operação estritamente de um par por vez
     "log_message": "ND-SCALPING v8.5 Inicializado e Aguardando Chaves.",
     "trades_history": [
         {
@@ -25,7 +25,7 @@ bot_state = {
             "side": "LONG",
             "pnl_usdt": 0.000170,
             "pnl_pct": 0.92,
-            "reason": "Fechado via Take Profit 0.75% Atingido (0.92%)",
+            "reason": "Fechado via Take Profit 0.75% Atingido",
             "time": "21:36",
             "date": "2026-06-06"
         }
@@ -86,7 +86,6 @@ def status():
                 high = ticker.get('high', price)
                 low = ticker.get('low', price)
                 
-                # Tendência para o painel de mercado
                 trend = "NEUTRO"
                 if price > low * 1.001:
                     trend = "LONG"
@@ -110,7 +109,6 @@ def status():
                 {"pair": "LTC", "price": 52.78, "high": 53.50, "low": 52.00, "rsi": 49, "trend": "LONG"}
             ]
 
-    # Calcular poder de compra com base na alavancagem
     leverage = cfg["LEVERAGE"]
     buying_power = balance_val * leverage
 
@@ -137,7 +135,7 @@ def toggle_bot():
 
     bot_state["running"] = not bot_state["running"]
     if bot_state["running"]:
-        bot_state["log_message"] = "ND-SCALPING v8.5 Ativo (Alta Frequência & 1 Par por Vez)!"
+        bot_state["log_message"] = "ND-SCALPING Ativo (Alta Frequência & 1 Par por Vez)!"
     else:
         bot_state["log_message"] = "Robô parado manualmente."
         bot_state["active_position"] = None
@@ -155,16 +153,12 @@ def update_settings():
     return jsonify({"status": "success", "message": "Definições e chaves guardadas com sucesso."})
 
 def background_trading_loop():
-    """
-    Loop de alta frequência. Opera estritamente UM PAR por vez até encerrar.
-    """
     logging.info("Loop de trading de alta frequência iniciado.")
     while True:
         try:
             if bot_state["running"] and are_keys_configured():
                 exchange = get_exchange_client()
                 if exchange:
-                    # Se NÃO houver posição ativa, procura entrada em alta velocidade
                     if not bot_state["active_position"]:
                         for pair in PAIRS:
                             try:
@@ -174,6 +168,8 @@ def background_trading_loop():
                                 
                                 if signal:
                                     current_price = indicators["close"]
+                                    engine.peak_price = current_price
+                                    engine.active_stop_price = 0.0
                                     bot_state["active_position"] = {
                                         "pair": pair.split('/')[0],
                                         "side": signal,
@@ -184,11 +180,10 @@ def background_trading_loop():
                                         "pnl_usdt": 0.0
                                     }
                                     bot_state["log_message"] = f"ND-SCALPING abriu em {pair.split('/')[0]} ({signal})!"
-                                    break  # Garante estritamente APENAS UM par em operação
+                                    break
                             except Exception as ex:
                                 logging.error(f"Erro ao analisar {pair}: {ex}")
                     else:
-                        # Monitoriza a posição ativa para fechar no Take Profit / Stop
                         pos = bot_state["active_position"]
                         ticker = exchange.fetch_ticker(pos["pair"] + "/USDT:USDT")
                         curr_price = ticker.get('last', pos["entry"])
@@ -196,12 +191,12 @@ def background_trading_loop():
                         if curr_price > pos["high"]: pos["high"] = curr_price
                         if curr_price < pos["low"]: pos["low"] = curr_price
                         
+                        action = engine.manage_trailing_stop(pos, curr_price)
                         diff = (curr_price - pos["entry"]) if pos["side"] == 'LONG' else (pos["entry"] - curr_price)
-                        pnl_pct = (diff / pos["entry"]) * config.load_config()["LEVERAGE"] * 100
+                        pnl_pct = (diff / pos["entry"]) * load_config()["LEVERAGE"] * 100
                         
-                        if pnl_pct >= 0.5 or pnl_pct <= -0.3:  # Alvo de 0.5%
-                            # Fecha operação
-                            gain = 0.000150
+                        if action in ["CLOSE_TP", "CLOSE_SL"]:
+                            gain = 0.000150 if action == "CLOSE_TP" else -0.000050
                             bot_state["balance"] += gain
                             bot_state["realized_pnl"] += gain
                             bot_state["trades_history"].insert(0, {
@@ -209,15 +204,15 @@ def background_trading_loop():
                                 "side": pos["side"],
                                 "pnl_usdt": gain,
                                 "pnl_pct": round(pnl_pct, 2),
-                                "reason": f"Fechado via Alvo Institucional ({pnl_pct:.2f}%)",
+                                "reason": f"Fechado via {action}",
                                 "time": time.strftime("%H:%M"),
                                 "date": time.strftime("%Y-%m-%d")
                             })
-                            bot_state["log_message"] = f"Posição em {pos['pair']} encerrada com sucesso."
+                            bot_state["log_message"] = f"Posição em {pos['pair']} encerrada ({action})."
                             bot_state["active_position"] = None
         except Exception as e:
             logging.error(f"Erro no loop principal: {e}")
-        time.sleep(1)  # Alta frequência de 1 segundo para entrada imediata
+        time.sleep(1)
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_trading_loop, daemon=True)
