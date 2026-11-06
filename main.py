@@ -52,7 +52,9 @@ HTML_TEMPLATE = """
         .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
         
-        input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
+        /* Inputs fixos a 100% para evitar retração visual */
+        input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; max-width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
+        
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
@@ -318,7 +320,6 @@ def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
-                # Instanciação otimizada específica para Conta Unificada Bybit (UTA V5)
                 exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
@@ -330,12 +331,9 @@ def background_loop():
                 })
                 
                 exchange.load_markets()
-                
-                # Chamada forçada ao tipo unificado para evitar retorno vazio em contas UTA
                 bal = exchange.fetch_balance({'type': 'unified'})
                 total = 0.0
                 
-                # Extração em cascata altamente resiliente
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
                     total = float(bal['total']['USDT'])
                 
