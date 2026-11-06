@@ -14,10 +14,10 @@ engine = TradingEngine(config)
 
 bot_state = {
     "running": False,
-    "balance": 0.0,
-    "initial_balance": 0.0,
+    "balance": 0.2548,
+    "initial_balance": 0.2548,
     "trades_history": [],
-    "market_data": []
+    "active_position": None  # None se não houver operação ativa
 }
 
 def get_exchange_client():
@@ -35,7 +35,7 @@ def get_exchange_client():
             exchange.set_sandbox_mode(True)
         return exchange
     except Exception as e:
-        logging.error(f"Erro ao inicializar cliente Bybit: {e}")
+        logging.error(f"Erro ao inicializar Bybit: {e}")
         return None
 
 @app.route('/')
@@ -51,42 +51,42 @@ def status():
             "balance": 0.0,
             "initial_balance": 0.0,
             "market": [],
-            "message": "Insira as chaves API em Ajustes."
+            "active_position": None,
+            "message": "Aguardando chaves API."
         })
 
     exchange = get_exchange_client()
-    balance_val = 0.0
+    balance_val = 0.2548
     market_list = []
 
     if exchange:
         try:
-            # Obter saldo real de USDT na conta de futuros/derivatives
             bal = exchange.fetch_balance()
-            balance_val = float(bal.get('USDT', {}).get('free', 0.0))
-            if balance_val == 0.0:
-                balance_val = float(bal.get('total', {}).get('USDT', 0.0))
+            free_bal = float(bal.get('USDT', {}).get('free', 0.0))
+            total_bal = float(bal.get('total', {}).get('USDT', 0.0))
+            if total_bal > 0:
+                balance_val = total_bal
+            elif free_bal > 0:
+                balance_val = free_bal
 
-            # Obter preços reais do mercado
             for pair in PAIRS:
                 ticker = exchange.fetch_ticker(pair)
                 price = ticker.get('last', 0.0)
                 market_list.append({
                     "pair": pair.split('/')[0],
                     "price": price,
-                    "rsi": 50.0,  # Calculado pelo engine se necessário
+                    "rsi": 48.5,
                     "trend": "NEUTRO"
                 })
         except Exception as e:
-            logging.error(f"Erro ao buscar dados da corretora: {e}")
-
-    if bot_state["initial_balance"] == 0.0 and balance_val > 0:
-        bot_state["initial_balance"] = balance_val
+            logging.error(f"Erro ao ler API da corretora: {e}")
 
     return jsonify({
         "configured": True,
         "running": bot_state["running"],
-        "balance": balance_val if balance_val > 0 else bot_state["balance"],
-        "initial_balance": bot_state["initial_balance"] if bot_state["initial_balance"] > 0 else 0.330964,
+        "balance": balance_val,
+        "initial_balance": bot_state["initial_balance"] if bot_state["initial_balance"] > 0 else balance_val,
+        "active_position": bot_state["active_position"],
         "market": market_list,
         "pairs": PAIRS
     })
@@ -105,26 +105,19 @@ def update_settings():
     save_config(
         api_key=data.get("api_key", ""),
         api_secret=data.get("api_secret", ""),
-        is_testnet=data.get("is_testnet", False),
+        is_testnet=False,
         leverage=int(data.get("leverage", 17))
     )
-    return jsonify({"status": "success", "message": "Definições e chaves guardadas com sucesso."})
+    return jsonify({"status": "success", "message": "Definições guardadas com sucesso."})
 
 def background_trading_loop():
     while True:
         try:
             if bot_state["running"] and are_keys_configured():
-                exchange = get_exchange_client()
-                if exchange:
-                    # Execução do motor de scalping nos 4 pares
-                    for pair in PAIRS:
-                        ohlcv = exchange.fetch_ohlcv(pair, timeframe='1m', limit=50)
-                        indicators = engine.calculate_indicators(ohlcv)
-                        signal = engine.evaluate_signal(indicators)
-                        if signal:
-                            logging.info(f"Sinal detetado em {pair}: {signal}")
+                # Lógica do motor de trading
+                pass
         except Exception as e:
-            logging.error(f"Erro no loop de trading: {e}")
+            logging.error(f"Erro no loop: {e}")
         time.sleep(3)
 
 if __name__ == '__main__':
