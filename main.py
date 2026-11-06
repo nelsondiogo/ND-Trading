@@ -40,7 +40,7 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ND-SCALPING Pro</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 10px 10px 70px 10px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 10px 10px 80px 10px; }
         .container { max-width: 500px; margin: auto; }
         h1 { color: #4ade80; text-align: center; font-size: 22px; margin-bottom: 15px; }
         .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
@@ -49,15 +49,22 @@ HTML_TEMPLATE = """
         .balance-box strong { font-size: 16px; color: #4ade80; }
         .card { background: #1e293b; border: 1px solid #334155; padding: 15px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
         .card h3 { color: #38bdf8; font-size: 14px; margin-top: 0; margin-bottom: 10px; text-transform: uppercase; }
-        button, input[type="submit"] { width: 100%; padding: 12px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; }
-        .btn-start { background: #16a34a; color: white; }
-        .btn-stop { background: #dc2626; color: white; }
         input[type="text"], input[type="password"], input[type="number"] { width: 100%; padding: 10px; margin-top: 5px; margin-bottom: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; padding: 10px 0; z-index: 100; }
-        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 12px; font-weight: bold; cursor: pointer; text-align: center; }
+        
+        /* BARRA DE NAVEGAÇÃO INFERIOR COM BOTÃO CIRCULAR CENTRAL */
+        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 8px 0; z-index: 100; height: 55px; }
+        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 11px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
         .nav-btn.active { color: #4ade80; }
+        
+        /* Botão Circular Central */
+        .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 12px; }
+        .btn-circle { width: 48px; height: 48px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 20px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.4); color: white; transition: transform 0.1s; }
+        .btn-circle:active { transform: scale(0.95); }
+        .btn-circle.start { background: #16a34a; }
+        .btn-circle.stop { background: #dc2626; }
+
         .log-box { background: #0f172a; border-left: 4px solid #4ade80; padding: 10px; border-radius: 6px; font-size: 13px; color: #cbd5e1; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; }
         .history-item { background: #334155; padding: 10px; border-radius: 8px; margin-bottom: 8px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
@@ -67,7 +74,9 @@ HTML_TEMPLATE = """
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
             document.getElementById(tabId).classList.add('active');
-            document.getElementById('btn-' + tabId).classList.add('active');
+            if(document.getElementById('btn-' + tabId)) {
+                document.getElementById('btn-' + tabId).classList.add('active');
+            }
             localStorage.setItem('activeTab', tabId);
         }
 
@@ -134,12 +143,6 @@ HTML_TEMPLATE = """
                 <h3>Estado / Log da API</h3>
                 <div class="log-box">{{ log }}</div>
             </div>
-
-            <form action="/toggle" method="POST">
-                <button type="submit" class="{{ 'btn-stop' if running else 'btn-start' }}">
-                    {{ 'PARAR ROBÔ' if running else 'INICIAR ROBÔ' }}
-                </button>
-            </form>
         </div>
 
         <!-- ABA MERCADO -->
@@ -238,17 +241,27 @@ HTML_TEMPLATE = """
                     <label>Alavancagem Manual:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
                     
-                    <button type="submit" class="btn-start" style="margin-top: 10px;">Guardar Definições</button>
+                    <button type="submit" style="width: 100%; padding: 12px; border-radius: 8px; border: none; font-size: 16px; font-weight: bold; cursor: pointer; background: #16a34a; color: white; margin-top: 10px;">Guardar Definições</button>
                 </form>
             </div>
         </div>
 
-        <!-- BARRA DE NAVEGAÇÃO INFERIOR -->
+        <!-- BARRA DE NAVEGAÇÃO INFERIOR COM BOTÃO CIRCULAR CENTRAL -->
         <div class="nav-bar">
-            <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊 Dashboard</button>
-            <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈 Mercado</button>
-            <button id="btn-historico" class="nav-btn" onclick="showTab('historico')">📋 Histórico</button>
-            <button id="btn-ajustes" class="nav-btn" onclick="showTab('ajustes')">⚙️ Ajustes</button>
+            <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊<br>Dashboard</button>
+            <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈<br>Mercado</button>
+            
+            <!-- Botão Circular Central de Ligar/Desligar -->
+            <div class="center-toggle-container">
+                <form action="/toggle" method="POST" style="margin:0;">
+                    <button type="submit" class="btn-circle {{ 'stop' if running else 'start' }}" title="{{ 'Parar Robô' if running else 'Iniciar Robô' }}">
+                        {{ '⏹' if running else '▶' }}
+                    </button>
+                </form>
+            </div>
+
+            <button id="btn-historico" class="nav-btn" onclick="showTab('historico')">📋<br>Histórico</button>
+            <button id="btn-ajustes" class="nav-btn" onclick="showTab('ajustes')">⚙️<br>Ajustes</button>
         </div>
     </div>
 </body>
@@ -311,9 +324,13 @@ def background_loop():
                     'options': {'defaultType': 'swap'}
                 })
                 
-                # Leitura real do saldo da Bybit
+                # Leitura real do saldo da Bybit em USDT (Conta unificada ou de derivativos)
                 bal = exchange.fetch_balance()
                 total = float(bal.get('total', {}).get('USDT', 0.0))
+                if total == 0 and 'info' in bal:
+                    # Fallback para estruturas alternativas de saldo da Bybit
+                    total = float(bal.get('free', {}).get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
+                
                 if total > 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
@@ -356,7 +373,7 @@ def background_loop():
 
         except Exception as e:
             logging.error(f"Erro na ligação à Bybit: {e}")
-            bot_state["log"] = f"Erro de leitura API: {str(e)[:50]}"
+            bot_state["log"] = f"Erro de ligação à corretora: {str(e)[:40]}"
         
         time.sleep(10)
 
