@@ -27,7 +27,7 @@ PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
 
 TAKE_PROFIT_PCT = 0.045       # 4.5%
 STOP_LOSS_PCT = 0.012         # 1.2%
-TRAILING_ACTIVATE_PCT = 0.005 # 0.5% para ativar a muralha
+TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -285,8 +285,91 @@ def calculate_rsi(closes, period=14):
     rs = avg_gain / avg_loss
     return 100.0 - (100.0 / (1.0 + rs))
 
+def fetch_market_and_balance():
+    if not bot_state["api_key"] or not bot_state["api_secret"]:
+        return
+    try:
+        exchange = ccxt.bybit({
+            'apiKey': bot_state["api_key"],
+            'secret': bot_state["api_secret"],
+            'enableRateLimit': True,
+            'options': {'defaultType': 'linear'}
+        })
+        exchange.load_markets()
+        
+        # Leitura de Saldo UTA V5
+        bal = exchange.fetch_balance({'type': 'unified'})
+        total = 0.0
+        if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
+            total = float(bal['total']['USDT'])
+        elif 'info' in bal and isinstance(bal['info'], dict):
+            res_list = bal['info'].get('result', {}).get('list', [])
+            if res_list:
+                for coin in res_list[0].get('coin', []):
+                    if coin.get('coin') == 'USDT':
+                        total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
+                        break
+        
+        if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
+            total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
+
+        if total > 0:
+            if bot_state["initial_balance"] == 0.0:
+                bot_state["initial_balance"] = total
+            bot_state["balance"] = total
+
+        # Leitura de Mercado Multitimeframe (5m e 15m)
+        market_list = []
+        for base_pair in PAIRS:
+            symbol = base_pair
+            if symbol not in exchange.markets:
+                if f"{base_pair}:USDT" in exchange.markets:
+                    symbol = f"{base_pair}:USDT"
+                elif f"{base_pair}/USDT:USDT" in exchange.markets:
+                    symbol = f"{base_pair}/USDT:USDT"
+
+            try:
+                ticker = exchange.fetch_ticker(symbol)
+                current_price = ticker.get('last', 0.0)
+                
+                ohlcv_5m = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
+                closes_5m = [c[4] for c in ohlcv_5m]
+                rsi_5m = calculate_rsi(closes_5m)
+                
+                ohlcv_15m = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
+                closes_15m = [c[4] for c in ohlcv_15m]
+                rsi_15m = calculate_rsi(closes_15m)
+
+                if rsi_5m < 35 and rsi_15m < 45:
+                    trend = "LONG"
+                elif rsi_5m > 65 and rsi_15m > 55:
+                    trend = "SHORT"
+                else:
+                    trend = "NEUTRO"
+
+                market_list.append({
+                    "pair": base_pair.split('/')[0],
+                    "symbol": symbol,
+                    "price": current_price,
+                    "rsi_5m": rsi_5m,
+                    "rsi_15m": rsi_15m,
+                    "trend": trend
+                })
+            except Exception as ex:
+                logging.error(f"Erro ao ler par {symbol}: {ex}")
+
+        if market_list:
+            bot_state["market_data"] = market_list
+            
+    except Exception as e:
+        logging.error(f"Erro na sincronização síncrona: {e}")
+
 @app.route('/')
 def index():
+    # Força a leitura imediata ao carregar a página se houver chaves
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        fetch_market_and_balance()
+        
     configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
@@ -319,7 +402,9 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Definições guardadas. Sincronizando Bybit..."
+    # Testa e lê de imediato ao guardar
+    fetch_market_and_balance()
+    bot_state["log"] = "Definições guardadas. Sincronizado com a Bybit."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -336,81 +421,18 @@ def background_loop():
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
-                exchange = ccxt.bybit({
-                    'apiKey': bot_state["api_key"],
-                    'secret': bot_state["api_secret"],
-                    'enableRateLimit': True,
-                    'options': {'defaultType': 'linear'}
-                })
+                fetch_market_and_balance()
                 
-                exchange.load_markets()
-                
-                # Leitura de saldo UTA V5
-                bal = exchange.fetch_balance({'type': 'unified'})
-                total = 0.0
-                if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
-                    total = float(bal['total']['USDT'])
-                elif 'info' in bal and isinstance(bal['info'], dict):
-                    res_list = bal['info'].get('result', {}).get('list', [])
-                    if res_list:
-                        for coin in res_list[0].get('coin', []):
-                            if coin.get('coin') == 'USDT':
-                                total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
-                                break
-                
-                if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
-                    total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
-
-                if total > 0:
-                    if bot_state["initial_balance"] == 0.0:
-                        bot_state["initial_balance"] = total
-                    bot_state["balance"] = total
-
-                # Leitura de Mercado Multitimeframe (5m e 15m)
-                market_list = []
-                for base_pair in PAIRS:
-                    symbol = base_pair
-                    if symbol not in exchange.markets:
-                        if f"{base_pair}:USDT" in exchange.markets:
-                            symbol = f"{base_pair}:USDT"
-                        elif f"{base_pair}/USDT:USDT" in exchange.markets:
-                            symbol = f"{base_pair}/USDT:USDT"
-
-                    try:
-                        ticker = exchange.fetch_ticker(symbol)
-                        current_price = ticker.get('last', 0.0)
-                        
-                        ohlcv_5m = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
-                        closes_5m = [c[4] for c in ohlcv_5m]
-                        rsi_5m = calculate_rsi(closes_5m)
-                        
-                        ohlcv_15m = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
-                        closes_15m = [c[4] for c in ohlcv_15m]
-                        rsi_15m = calculate_rsi(closes_15m)
-
-                        if rsi_5m < 35 and rsi_15m < 45:
-                            trend = "LONG"
-                        elif rsi_5m > 65 and rsi_15m > 55:
-                            trend = "SHORT"
-                        else:
-                            trend = "NEUTRO"
-
-                        market_list.append({
-                            "pair": base_pair.split('/')[0],
-                            "symbol": symbol,
-                            "price": current_price,
-                            "rsi_5m": rsi_5m,
-                            "rsi_15m": rsi_15m,
-                            "trend": trend
-                        })
-                    except Exception as ex:
-                        logging.error(f"Erro ao ler par {symbol}: {ex}")
-
-                if market_list:
-                    bot_state["market_data"] = market_list
-
                 # Gestão de Posição e Muralha Trailing Stop
                 if bot_state["running"]:
+                    exchange = ccxt.bybit({
+                        'apiKey': bot_state["api_key"],
+                        'secret': bot_state["api_secret"],
+                        'enableRateLimit': True,
+                        'options': {'defaultType': 'linear'}
+                    })
+                    exchange.load_markets()
+                    
                     pos = bot_state["active_position"]
                     if pos:
                         symbol = pos["symbol"]
@@ -477,7 +499,7 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
                     else:
-                        for item in market_list:
+                        for item in bot_state["market_data"]:
                             if item["trend"] in ["LONG", "SHORT"]:
                                 bot_state["active_position"] = {
                                     "pair": item["pair"],
@@ -494,7 +516,6 @@ def background_loop():
         except Exception as e:
             err_msg = str(e)
             logging.error(f"Erro crítico no background_loop: {err_msg}")
-            bot_state["log"] = f"Erro de conexão: {err_msg[:50]}"
         
         time.sleep(5)
 
