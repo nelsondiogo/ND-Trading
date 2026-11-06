@@ -5,14 +5,12 @@ class TradingEngine:
         self.config = config
 
     def calculate_indicators(self, ohlcv):
-        """Calcula indicadores de altíssima precisão e confirmação de velas para Scalping"""
-        if not ohlcv or len(ohlcv) < 30:
+        """Calcula EMAs rápidas, RSI restrito e ação de velas consecutivas"""
+        if not ohlcv or len(ohlcv) < 35:
             return None
         
         closes = [candle[4] for candle in ohlcv]
         opens = [candle[1] for candle in ohlcv]
-        highs = [candle[2] for candle in ohlcv]
-        lows = [candle[3] for candle in ohlcv]
         
         # 1. RSI (14 períodos)
         gains = []
@@ -31,7 +29,7 @@ class TradingEngine:
         
         rsi = 100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss)))
 
-        # 2. EMAs Rápidas (EMA 9 e EMA 21) para Tendência de Curto Prazo
+        # 2. EMAs Rápidas (EMA 9 e EMA 21)
         k9 = 2 / (9 + 1)
         k21 = 2 / (21 + 1)
         ema9 = closes[0]
@@ -40,7 +38,7 @@ class TradingEngine:
             ema9 = (price * k9) + (ema9 * (1 - k9))
             ema21 = (price * k21) + (ema21 * (1 - k21))
 
-        # 3. Ação de Preço Estrita (Últimas 2 velas)
+        # 3. Velas Consecutivas para Confirmação de Momento
         c_prev = {'open': opens[-2], 'close': closes[-2]}
         c_curr = {'open': opens[-1], 'close': closes[-1]}
 
@@ -55,8 +53,8 @@ class TradingEngine:
 
     def evaluate_signal(self, indicators):
         """
-        Entrada com Rigor Extremo:
-        Exige alinhamento perfeito de EMAs, velas consecutivas confirmadas e RSI restrito.
+        Entrada com Rigor Institucional Máximo:
+        Exige alinhamento de EMAs, velas consecutivas firmes e RSI estrito para banir falsos rompimentos.
         """
         if not indicators:
             return None
@@ -70,22 +68,22 @@ class TradingEngine:
         prev_body = c_prev["close"] - c_prev["open"]
         curr_body = c_curr["close"] - c_curr["open"]
 
-        # LONG com Rigor Extremo: EMA9 > EMA21, duas velas consecutivas verdes e RSI estrito (52 a 65)
+        # LONG Institucional: EMA9 > EMA21, duas velas consecutivas verdes e RSI restrito (52 a 63)
         is_long_valid = (
             ema9 > ema21 and 
             prev_body > 0 and 
             curr_body > 0 and 
-            52 <= rsi <= 65
+            52 <= rsi <= 63
         )
         if is_long_valid:
             return "LONG"
 
-        # SHORT com Rigor Extremo: EMA9 < EMA21, duas velas consecutivas vermelhas e RSI estrito (35 a 48)
+        # SHORT Institucional: EMA9 < EMA21, duas velas consecutivas vermelhas e RSI restrito (37 a 48)
         is_short_valid = (
             ema9 < ema21 and 
             prev_body < 0 and 
             curr_body < 0 and 
-            35 <= rsi <= 48
+            37 <= rsi <= 48
         )
         if is_short_valid:
             return "SHORT"
@@ -94,34 +92,38 @@ class TradingEngine:
 
     def evaluate_exit_condition(self, pnl_pct, max_profit_reached, active_side, current_signal, leverage=17):
         """
-        Regras de Saída Blindadas:
-        1. TAKE PROFIT FIRME: Atingiu ou ultrapassou 0.75% (0.0075) alavancado, fecha IMEDIATAMENTE.
-        2. STOP DE SEGURANÇA DE EMERGÊNCIA: Se o PnL alavancado atingir -5% (-0.05), corta para proteger a banca.
-        3. Proteção por recuo de topo e mudança de direção com lucro.
+        Gestão de Risco e Saída Corporativa:
+        1. Take Profit Firme em 3.0% alavancado.
+        2. Stop Loss Técnico Inicial de 1.2% (dá folga para o mercado corrigir).
+        3. Break-Even ativado a +0.5% (risco zero a partir desse ponto).
+        4. Trailing Stop de Degraus acompanhando o lucro máximo (fecha imediatamente se tentar recuar do cume).
         """
         leveraged_pnl = pnl_pct * leverage
         leveraged_max_profit = max_profit_reached * leverage
 
-        # 1. Take Profit Absoluto em 0.75% ou mais
-        if leveraged_pnl >= 0.0075:
-            return True, f"Take Profit 0.75% Atingido ({leveraged_pnl*100:.2f}%)"
+        # 1. Take Profit Institucional em 3.0%
+        if leveraged_pnl >= 0.03:
+            return True, f"Take Profit Institucional 3.0% Atingido ({leveraged_pnl*100:.2f}%)"
 
-        # 2. Stop de Segurança contra Drawdown Extremo (Proteção de Capital)
-        if leveraged_pnl <= -0.05:
-            return True, f"Stop de Segurança de Emergência ({leveraged_pnl*100:.2f}%)"
+        # 2. Stop Loss Técnico com folga de 1.2% para absorção de volatilidade inicial
+        if leveraged_pnl <= -0.012:
+            return True, f"Stop Loss Técnico de Absorção ({leveraged_pnl*100:.2f}%)"
 
-        if pnl_pct <= 0:
+        # Se estiver negativo entre 0% e -1.2%, deixa o mercado respirar sem fechar antecipadamente
+        if pnl_pct < 0:
             return False, None
 
-        # 3. Mudança de Direção com Lucro
-        if active_side == 'LONG' and current_signal in [None, 'SHORT']:
-            return True, f"Proteção por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
-        if active_side == 'SHORT' and current_signal in [None, 'LONG']:
-            return True, f"Proteção por Mudança de Direção (Sinal: {current_signal or 'NEUTRO'})"
+        # 3. Trailing Stop Dinâmico & Break-Even a partir de +0.5%
+        if leveraged_max_profit >= 0.005:
+            # Assim que passa de +0.5%, o piso de proteção sobe (garantindo zero prejuízo e trancando os degraus de lucro)
+            lock_in_threshold = max(0.0, leveraged_max_profit * 0.75)
+            if leveraged_pnl < lock_in_threshold:
+                return True, f"Trailing Stop Dinâmico (Degrau Protegido - Pico: {leveraged_max_profit*100:.2f}%)"
 
-        # 4. Recuo do Pico de Lucro
-        if leveraged_max_profit > 0.002:
-            if pnl_pct < (max_profit_reached * 0.95):
-                return True, f"Proteção por Recuo (Pico: {leveraged_max_profit*100:.2f}%)"
+        # 4. Mudança de Direção com Lucro Garantido
+        if active_side == 'LONG' and current_signal == 'SHORT' and leveraged_pnl > 0:
+            return True, "Proteção por Mudança de Direção com Lucro"
+        if active_side == 'SHORT' and current_signal == 'LONG' and leveraged_pnl > 0:
+            return True, "Proteção por Mudança de Direção com Lucro"
 
         return False, None
