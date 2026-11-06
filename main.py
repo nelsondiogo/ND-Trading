@@ -20,7 +20,7 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "history": [],
-    "log": "Aguardando chaves API..."
+    "log": "Sistema inicializado. Insira as chaves em Ajustes."
 }
 
 PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
@@ -319,7 +319,7 @@ def settings():
     except ValueError:
         pass
     
-    bot_state["log"] = "Definições salvas. Sistema em sincronia..."
+    bot_state["log"] = "Definições guardadas. Sincronizando Bybit..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -329,7 +329,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado. Monitorando sinais (5m/15m)..." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e operando com muralha rigorosa." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -345,7 +345,7 @@ def background_loop():
                 
                 exchange.load_markets()
                 
-                # Sincronização de Saldo UTA
+                # Leitura robusta do saldo UTA V5
                 bal = exchange.fetch_balance({'type': 'unified'})
                 total = 0.0
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
@@ -358,12 +358,15 @@ def background_loop():
                                 total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
                                 break
                 
+                if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
+                    total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
+
                 if total > 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
-                # 1. ANÁLISE DE MERCADO MULTITIMEFRAME (5m e 15m) COM RESOLUÇÃO ROBUSTA DE SÍMBOLOS
+                # Leitura de Mercado Multitimeframe (5m e 15m)
                 market_list = []
                 for base_pair in PAIRS:
                     symbol = base_pair
@@ -406,10 +409,9 @@ def background_loop():
                 if market_list:
                     bot_state["market_data"] = market_list
 
-                # 2. GESTÃO DE POSIÇÃO E EXECUÇÃO DE TRADING
+                # Gestão de Posição Ativa e Muralha Trailing Stop
                 if bot_state["running"]:
                     pos = bot_state["active_position"]
-                    
                     if pos:
                         symbol = pos["symbol"]
                         ticker = exchange.fetch_ticker(symbol)
@@ -424,14 +426,12 @@ def background_loop():
                         
                         pos["pnl"] = pnl_pct * 100.0
 
-                        # A. ATIVAÇÃO DA MURALHA TRAILING STOP (+0.5%)
                         if pnl_pct >= TRAILING_ACTIVATE_PCT:
                             if not pos["trailing_active"]:
                                 pos["trailing_active"] = True
                                 pos["highest_price"] = current_price
                                 bot_state["log"] = f"Muralha ativada em {pos['pair']} (+{pnl_pct*100:.2f}%)!"
 
-                        # B. ATUALIZAÇÃO DO PONTO MÁXIMO E RECUO RIGOROSO
                         if pos["trailing_active"]:
                             if side == "LONG" and current_price > pos["highest_price"]:
                                 pos["highest_price"] = current_price
@@ -439,7 +439,7 @@ def background_loop():
                                 pos["highest_price"] = current_price
 
                             if side == "LONG" and current_price < pos["highest_price"]:
-                                bot_state["log"] = f"Muralha acionada! Fechando {pos['pair']} por recuo do topo."
+                                bot_state["log"] = f"Muralha rigorosa acionada! Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -447,9 +447,8 @@ def background_loop():
                                 })
                                 bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                                 bot_state["active_position"] = None
-
                             elif side == "SHORT" and current_price > pos["highest_price"]:
-                                bot_state["log"] = f"Muralha acionada! Fechando {pos['pair']} por recuo do fundo."
+                                bot_state["log"] = f"Muralha rigorosa acionada! Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -458,9 +457,8 @@ def background_loop():
                                 bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                                 bot_state["active_position"] = None
 
-                        # C. TAKE PROFIT COMPLETO (+4.5%)
                         elif pnl_pct >= TAKE_PROFIT_PCT:
-                            bot_state["log"] = f"Take Profit atingido (+4.5%) em {pos['pair']}!"
+                            bot_state["log"] = f"Take Profit (+4.5%) atingido em {pos['pair']}!"
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
                                 "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -469,9 +467,8 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
 
-                        # D. STOP LOSS RIGOROSO (-1.2%)
                         elif pnl_pct <= -STOP_LOSS_PCT:
-                            bot_state["log"] = f"Stop Loss acionado (-1.2%) em {pos['pair']}."
+                            bot_state["log"] = f"Stop Loss (-1.2%) acionado em {pos['pair']}."
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
                                 "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
@@ -479,7 +476,6 @@ def background_loop():
                             })
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
-
                     else:
                         for item in market_list:
                             if item["trend"] in ["LONG", "SHORT"]:
@@ -492,13 +488,15 @@ def background_loop():
                                     "pnl": 0.0,
                                     "trailing_active": False
                                 }
-                                bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']}) em {item['price']}"
+                                bot_state["log"] = f"Posição aberta: {item['pair']} ({item['trend']}) em {item['price']}"
                                 break
 
         except Exception as e:
-            logging.error(f"Erro no loop de operação: {e}")
+            err_msg = str(e)
+            logging.error(f"Erro crítico no background_loop: {err_msg}")
+            bot_state["log"] = f"Erro de conexão: {err_msg[:50]}"
         
-        time.sleep(3)
+        time.sleep(5)
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
