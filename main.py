@@ -293,7 +293,6 @@ def settings():
     if key and key != "********":
         bot_state["api_key"] = key
         
-    # Proteção essencial: só altera o segredo se for uma chave nova real (evita gravar os asteriscos)
     if secret and not secret.startswith("****") and secret != "********":
         bot_state["api_secret"] = secret
         
@@ -386,7 +385,7 @@ def background_loop():
         except Exception as e:
             err_msg = str(e)
             logging.error(f"Erro Bybit: {err_msg}")
-            bot_state["log"]` = f"Erro API: {err_msg[:60]}"
+            bot_state["log"] = f"Erro API: {err_msg[:60]}"
         
         time.sleep(10)
 
