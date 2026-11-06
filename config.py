@@ -9,7 +9,6 @@ PAIRS = [
 
 SCAN_INTERVAL = 1  # Alta frequência para máxima velocidade de entrada
 
-# Configurações de risco institucional
 TAKE_PROFIT_PCT = 0.045  # 4.5% Take Profit Global
 STOP_LOSS_PCT = 0.012    # 1.2% Stop Loss Base
 TRAILING_ACTIVATION = 0.005 # 0.5% para ativar a trava móvel no cume
