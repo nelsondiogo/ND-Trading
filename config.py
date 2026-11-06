@@ -1,14 +1,18 @@
 import os
 
-# 4 Pares mais estáveis e de baixo valor (Removidos DOGE e XRP devido aos ruídos e drawdowns passados)
+# Lista expandida para 8 pares leves e de baixo ruído
 PAIRS = [
     'ADA/USDT:USDT',
     'TRX/USDT:USDT',
     'NEAR/USDT:USDT',
-    'LTC/USDT:USDT'
+    'LTC/USDT:USDT',
+    'POL/USDT:USDT',
+    'ALGO/USDT:USDT',
+    'VET/USDT:USDT',
+    'XLM/USDT:USDT'
 ]
 
-SCAN_INTERVAL = 2  # Varredura de alta frequência
+SCAN_INTERVAL = 2  # Varredura de alta frequência (2 segundos)
 
 BYBIT_API_KEY = os.environ.get("BYBIT_API_KEY", "")
 BYBIT_API_SECRET = os.environ.get("BYBIT_API_SECRET", "")
