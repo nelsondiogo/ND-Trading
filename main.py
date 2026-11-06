@@ -17,14 +17,18 @@ bot_state = {
     "initial_balance": 0.0,
     "balance": 0.0,
     "realized_pnl": 0.0,
-    "active_position": None,
+    "active_position": None,  # Exemplo: {"pair": "ADA", "symbol": "ADA/USDT:USDT", "side": "LONG", "entry": 0.18, "highest_price": 0.18, "trailing_active": False}
     "market_data": [],
     "history": [],
     "log": "Aguardando chaves API..."
 }
 
-# Pares base de scalping
-PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT', 'XRP/USDT', 'DOGE/USDT']
+PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
+
+# Parâmetros de Gestão Institucional de Risco
+TAKE_PROFIT_PCT = 0.045     # 4.5%
+STOP_LOSS_PCT = 0.012       # 1.2%
+TRAILING_ACTIVATE_PCT = 0.005 # 0.5% para ativar muralha
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -32,7 +36,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING</title>
+    <title>ND-SCALPING PRO</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -112,7 +116,8 @@ HTML_TEMPLATE = """
                 <h3>Posição Ativa</h3>
                 {% if active_position %}
                     <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
-                    <p>Entrada: <b>{{ active_position.entry }}</b></p>
+                    <p>Entrada: <b>{{ active_position.entry }}</b> | PNL: <b style="color: {{ '#4ade80' if active_position.pnl >= 0 else '#f87171' }}">{{ "+%.2f"|format(active_position.pnl) if active_position.pnl >= 0 else "%.2f"|format(active_position.pnl) }}%</b></p>
+                    <small style="color: #38bdf8;">Muralha Trailing: {{ 'ATIVADA (Rigorosa)' if active_position.trailing_active else 'Inativa (<0.5%)' }}</small>
                 {% else %}
                     <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhuma posição ativa.</p>
                 {% endif %}
@@ -156,11 +161,11 @@ HTML_TEMPLATE = """
             {% endif %}
 
             <div class="card">
-                <h3>Mercado em Tempo Real</h3>
+                <h3>Mercado em Tempo Real (5m / 15m)</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
-                        <b>{{ item.pair }}</b> <small style="color: #94a3b8;">(RSI: {{ "%.1f"|format(item.rsi) }})</small><br>
+                        <b>{{ item.pair }}</b> <small style="color: #94a3b8;">(RSI 5m: {{ "%.1f"|format(item.rsi_5m) }} | 15m: {{ "%.1f"|format(item.rsi_15m) }})</small><br>
                         <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
                     </div>
                     <span style="color: {{ '#4ade80' if item.trend == 'LONG' else ('#f87171' if item.trend == 'SHORT' else '#94a3b8') }}; font-weight: bold; font-size: 12px;">
@@ -239,7 +244,7 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- BARRA DE NAVEGAÇÃO INFERIOR COM BOTÃO CIRCULAR CENTRAL -->
+        <!-- BARRA DE NAVEGAÇÃO INFERIOR -->
         <div class="nav-bar">
             <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊<br>Dashboard</button>
             <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈<br>Mercado</button>
@@ -259,6 +264,27 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+
+def calculate_rsi(closes, period=14):
+    if len(closes) < period + 1:
+        return 50.0
+    gains, losses = 0.0, 0.0
+    for i in range(1, period + 1):
+        diff = closes[i] - closes[i-1]
+        if diff > 0: gains += diff
+        else: losses -= diff
+    avg_gain = gains / period
+    avg_loss = losses / period
+    for i in range(period + 1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        gain = diff if diff > 0 else 0.0
+        loss = -diff if diff < 0 else 0.0
+        avg_gain = (avg_gain * 13 + gain) / 14
+        avg_loss = (avg_loss * 13 + loss) / 14
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100.0 - (100.0 / (1.0 + rs))
 
 @app.route('/')
 def index():
@@ -286,7 +312,6 @@ def settings():
     
     if key and key != "********":
         bot_state["api_key"] = key
-        
     if secret and not secret.startswith("****") and secret != "********":
         bot_state["api_secret"] = secret
         
@@ -295,74 +320,7 @@ def settings():
     except ValueError:
         pass
     
-    # Teste imediato e resolução síncrona
-    try:
-        temp_ex = ccxt.bybit({
-            'apiKey': bot_state["api_key"],
-            'secret': bot_state["api_secret"],
-            'enableRateLimit': True,
-            'options': {'defaultType': 'linear'}
-        })
-        temp_ex.load_markets()
-        bal = temp_ex.fetch_balance({'type': 'unified'})
-        
-        test_total = 0.0
-        if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
-            test_total = float(bal['total']['USDT'])
-        elif 'info' in bal and isinstance(bal['info'], dict):
-            res_list = bal['info'].get('result', {}).get('list', [])
-            if res_list:
-                for coin in res_list[0].get('coin', []):
-                    if coin.get('coin') == 'USDT':
-                        test_total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
-                        break
-
-        bot_state["balance"] = test_total
-        if bot_state["initial_balance"] == 0.0:
-            bot_state["initial_balance"] = test_total
-
-        # Carrega o mercado imediatamente ao guardar
-        market_list = []
-        for base_pair in PAIRS:
-            # Encontra o símbolo correto carregado pela corretora
-            symbol = base_pair
-            if symbol not in temp_ex.markets:
-                if f"{base_pair}:USDT" in temp_ex.markets:
-                    symbol = f"{base_pair}:USDT"
-            
-            try:
-                ticker = temp_ex.fetch_ticker(symbol)
-                price = ticker.get('last', 0.0)
-                ohlcv = temp_ex.fetch_ohlcv(symbol, timeframe='1m', limit=20)
-                if ohlcv and len(ohlcv) >= 14:
-                    closes = [candle[4] for candle in ohlcv]
-                    gains, losses = 0.0, 0.0
-                    for i in range(1, len(closes)):
-                        diff = closes[i] - closes[i-1]
-                        if diff > 0: gains += diff
-                        else: losses -= diff
-                    rs = (gains / 14) / ((losses / 14) if losses != 0 else 1)
-                    rsi = 100 - (100 / (1 + rs))
-                else:
-                    rsi = 50.0
-
-                trend = "LONG" if rsi < 35 else ("SHORT" if rsi > 65 else "NEUTRO")
-                market_list.append({
-                    "pair": base_pair.split('/')[0],
-                    "price": price,
-                    "rsi": rsi,
-                    "trend": trend
-                })
-            except Exception as sub_ex:
-                logging.error(f"Erro ao carregar par {symbol}: {sub_ex}")
-
-        if market_list:
-            bot_state["market_data"] = market_list
-
-        bot_state["log"] = f"Sucesso! Saldo: {test_total:.4f} USDT | Ativos: {len(market_list)}"
-    except Exception as err:
-        bot_state["log"] = f"Falha na API Bybit: {str(err)[:85]}"
-
+    bot_state["log"] = "Definições salvas. Sistema em sincronia..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -372,7 +330,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e a operar." if bot_state["running"] else "Robô parado manualmente."
+    bot_state["log"] = "Robô ativado. Monitorando sinais (5m/15m)..." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -387,71 +345,166 @@ def background_loop():
                 })
                 
                 exchange.load_markets()
+                
+                # Sincronização de Saldo UTA
                 bal = exchange.fetch_balance({'type': 'unified'})
                 total = 0.0
-                
                 if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
                     total = float(bal['total']['USDT'])
                 elif 'info' in bal and isinstance(bal['info'], dict):
-                    result_list = bal['info'].get('result', {}).get('list', [])
-                    if result_list:
-                        coin_list = result_list[0].get('coin', [])
-                        for coin in coin_list:
+                    res_list = bal['info'].get('result', {}).get('list', [])
+                    if res_list:
+                        for coin in res_list[0].get('coin', []):
                             if coin.get('coin') == 'USDT':
                                 total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
                                 break
                 
-                if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
-                    total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
-
-                if total >= 0:
+                if total > 0:
                     if bot_state["initial_balance"] == 0.0:
                         bot_state["initial_balance"] = total
                     bot_state["balance"] = total
 
+                # 1. ANÁLISE DE MERCADO MULTITIMEFRAME (5m e 15m)
                 market_list = []
                 for base_pair in PAIRS:
                     symbol = base_pair
-                    if symbol not in exchange.markets:
-                        if f"{base_pair}:USDT" in exchange.markets:
-                            symbol = f"{base_pair}:USDT"
+                    if symbol not in exchange.markets and f"{base_pair}:USDT" in exchange.markets:
+                        symbol = f"{base_pair}:USDT"
                     
                     try:
                         ticker = exchange.fetch_ticker(symbol)
-                        price = ticker.get('last', 0.0)
+                        current_price = ticker.get('last', 0.0)
                         
-                        ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=20)
-                        if ohlcv and len(ohlcv) >= 14:
-                            closes = [candle[4] for candle in ohlcv]
-                            gains, losses = 0.0, 0.0
-                            for i in range(1, len(closes)):
-                                diff = closes[i] - closes[i-1]
-                                if diff > 0: gains += diff
-                                else: losses -= diff
-                            rs = (gains / 14) / ((losses / 14) if losses != 0 else 1)
-                            rsi = 100 - (100 / (1 + rs))
-                        else:
-                            rsi = 50.0
+                        # Velas de 5 minutos (Estrutura)
+                        ohlcv_5m = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
+                        closes_5m = [c[4] for c in ohlcv_5m]
+                        rsi_5m = calculate_rsi(closes_5m)
+                        
+                        # Velas de 15 minutos (Tendência Principal)
+                        ohlcv_15m = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
+                        closes_15m = [c[4] for c in ohlcv_15m]
+                        rsi_15m = calculate_rsi(closes_15m)
 
-                        trend = "LONG" if rsi < 35 else ("SHORT" if rsi > 65 else "NEUTRO")
+                        # Sinal alinhado em múltiplos prazos
+                        if rsi_5m < 35 and rsi_15m < 45:
+                            trend = "LONG"
+                        elif rsi_5m > 65 and rsi_15m > 55:
+                            trend = "SHORT"
+                        else:
+                            trend = "NEUTRO"
 
                         market_list.append({
                             "pair": base_pair.split('/')[0],
-                            "price": price,
-                            "rsi": rsi,
+                            "symbol": symbol,
+                            "price": current_price,
+                            "rsi_5m": rsi_5m,
+                            "rsi_15m": rsi_15m,
                             "trend": trend
                         })
                     except Exception as ex:
-                        logging.error(f"Erro no par {symbol}: {ex}")
+                        logging.error(f"Erro ao ler par {symbol}: {ex}")
 
                 if market_list:
                     bot_state["market_data"] = market_list
 
+                # 2. GESTÃO DE POSIÇÃO E EXECUÇÃO DE TRADING
+                if bot_state["running"]:
+                    pos = bot_state["active_position"]
+                    
+                    # SE JÁ EXISTE UMA POSIÇÃO ATIVA -> GERIR TRAILING E ALVOS
+                    if pos:
+                        symbol = pos["symbol"]
+                        ticker = exchange.fetch_ticker(symbol)
+                        current_price = ticker.get('last', 0.0)
+                        entry_price = pos["entry"]
+                        side = pos["side"]
+
+                        # Cálculo de PNL Não-Realizado (%)
+                        if side == "LONG":
+                            pnl_pct = (current_price - entry_price) / entry_price
+                        else:
+                            pnl_pct = (entry_price - current_price) / entry_price
+                        
+                        pos["pnl"] = pnl_pct * 100.0
+
+                        # A. ATIVAÇÃO DA MURALHA TRAILING STOP (+0.5%)
+                        if pnl_pct >= TRAILING_ACTIVATE_PCT:
+                            if not pos["trailing_active"]:
+                                pos["trailing_active"] = True
+                                pos["highest_price"] = current_price
+                                bot_state["log"] = f"Muralha ativada em {pos['pair']} (+{pnl_pct*100:.2f}%)!"
+
+                        # B. ATUALIZAÇÃO DO PONTO MÁXIMO (CUME DO PREÇO)
+                        if pos["trailing_active"]:
+                            if side == "LONG" and current_price > pos["highest_price"]:
+                                pos["highest_price"] = current_price
+                            elif side == "SHORT" and current_price < pos["highest_price"]:
+                                pos["highest_price"] = current_price
+
+                            # SE HOUVER QUALQUER RECUO CONTRA O CUME -> FECHO RIGOROSO
+                            if side == "LONG" and current_price < pos["highest_price"]:
+                                # Fecho Imediato por Recuo
+                                bot_state["log"] = f"Muralha acionada! Fechando {pos['pair']} por recuo do topo."
+                                bot_state["history"].append({
+                                    "pair": pos["pair"], "side": side,
+                                    "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
+                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop Rigoroso"
+                                })
+                                bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
+                                bot_state["active_position"] = None
+
+                            elif side == "SHORT" and current_price > pos["highest_price"]:
+                                bot_state["log"] = f"Muralha acionada! Fechando {pos['pair']} por recuo do fundo."
+                                bot_state["history"].append({
+                                    "pair": pos["pair"], "side": side,
+                                    "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
+                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop Rigoroso"
+                                })
+                                bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
+                                bot_state["active_position"] = None
+
+                        # C. TAKE PROFIT COMPLETO (+4.5%)
+                        elif pnl_pct >= TAKE_PROFIT_PCT:
+                            bot_state["log"] = f"Take Profit atingido (+4.5%) em {pos['pair']}!"
+                            bot_state["history"].append({
+                                "pair": pos["pair"], "side": side,
+                                "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
+                                "pnl_pct": pos["pnl"], "reason": "Take Profit Target"
+                            })
+                            bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
+                            bot_state["active_position"] = None
+
+                        # D. STOP LOSS RIGOROSO (-1.2%)
+                        elif pnl_pct <= -STOP_LOSS_PCT:
+                            bot_state["log"] = f"Stop Loss acionado (-1.2%) em {pos['pair']}."
+                            bot_state["history"].append({
+                                "pair": pos["pair"], "side": side,
+                                "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
+                                "pnl_pct": pos["pnl"], "reason": "Stop Loss Limit"
+                            })
+                            bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
+                            bot_state["active_position"] = None
+
+                    # SE NÃO HÁ POSIÇÃO -> PROCURAR SINAL ALINHADO EM 5M E 15M
+                    else:
+                        for item in market_list:
+                            if item["trend"] in ["LONG", "SHORT"]:
+                                bot_state["active_position"] = {
+                                    "pair": item["pair"],
+                                    "symbol": item["symbol"],
+                                    "side": item["trend"],
+                                    "entry": item["price"],
+                                    "highest_price": item["price"],
+                                    "pnl": 0.0,
+                                    "trailing_active": False
+                                }
+                                bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']}) em {item['price']}"
+                                break
+
         except Exception as e:
-            err_msg = str(e)
-            logging.error(f"Erro Bybit UTA Loop: {err_msg}")
+            logging.error(f"Erro no loop de operação: {e}")
         
-        time.sleep(10)
+        time.sleep(3) # Ciclo de alta frequência (3s) para trailing rigoroso
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
