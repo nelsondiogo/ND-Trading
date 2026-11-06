@@ -338,7 +338,7 @@ def fetch_market_and_balance():
                 closes_15m = [c[4] for c in ohlcv_15m]
                 rsi_15m = calculate_rsi(closes_15m)
 
-                # Filtro dinâmico e rápido (baseado primariamente em 5m, com suporte de 15m)
+                # Gatilho de alta frequência focado no RSI de 5m (RSI < 38 para LONG, > 62 para SHORT)
                 if rsi_5m < 38:
                     trend = "LONG"
                 elif rsi_5m > 62:
@@ -411,7 +411,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e operando com muralha rigorosa." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado em alta frequência (RSI 5m)." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -427,12 +427,6 @@ def background_loop():
                     'options': {'defaultType': 'linear'}
                 })
                 exchange.load_markets()
-                
-                # Configurar alavancagem se necessário
-                try:
-                    exchange.set_leverage(bot_state["leverage"], 'ADA/USDT:USDT')
-                except Exception:
-                    pass
 
                 pos = bot_state["active_position"]
                 if bot_state["running"]:
@@ -507,15 +501,19 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
                     else:
-                        # Procurar sinal e abrir ordem real na corretora
+                        # Procurar sinal imediato e abrir ordem real na Bybit
                         for item in bot_state["market_data"]:
                             if item["trend"] in ["LONG", "SHORT"]:
                                 symbol = item["symbol"]
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
-                                # Calcular quantidade baseada no saldo disponível e alavancagem
-                                notional = bot_state["balance"] * bot_state["leverage"] * 0.95 # 95% do poder
-                                amount = notional / item["price"]
+                                # Cálculo de montante adaptado ao saldo disponível e alavancagem
+                                market_info = exchange.market(symbol)
+                                min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
+                                
+                                notional = bot_state["balance"] * bot_state["leverage"] * 0.95
+                                calc_amount = notional / item["price"]
+                                amount = max(calc_amount, min_amount)
                                 
                                 try:
                                     order = exchange.create_market_order(symbol, side, amount)
@@ -531,10 +529,10 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem real aberta: {item['pair']} ({item['trend']}) a {execution_price}"
+                                    bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']}) a {execution_price}"
                                     break
                                 except Exception as ord_err:
-                                    bot_state["log"] = f"Erro ao abrir ordem: {str(ord_err)[:50]}"
+                                    bot_state["log"] = f"Erro Bybit Ordem: {str(ord_err)[:55]}"
 
         except Exception as e:
             logging.error(f"Erro crítico no background_loop: {e}")
