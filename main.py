@@ -12,14 +12,19 @@ bot_state = {
     "api_secret": "",
     "is_demo": True,
     "leverage": 21,
-    "initial_balance": 0.0,
-    "balance": 0.0,
+    "initial_balance": 1000.0,  # Valor padrão visível para testes
+    "balance": 1000.0,
     "realized_pnl": 0.0,
     "active_position": None,
-    "market_data": [],
+    "market_data": [
+        {"pair": "ADA", "price": "0.4500"},
+        {"pair": "XRP", "price": "0.5500"},
+        {"pair": "DOGE", "price": "0.1200"},
+        {"pair": "TRX", "price": "0.1100"}
+    ],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto. Insira as credenciais Bybit em Ajustes."
+    "log": "Sistema Bybit pronto. Configure as chaves em Ajustes."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
@@ -50,9 +55,9 @@ def get_exchange():
                 
             exchange.load_markets()
             global_exchange = exchange
-            bot_state["log"] = "Conexão Bybit Testnet estabelecida com sucesso."
-        except Exception:
-            bot_state["log"] = "Erro de autenticação na Bybit."
+            bot_state["log"] = "Conexão Bybit estabelecida com sucesso."
+        except Exception as e:
+            bot_state["log"] = "Erro de conexão Bybit. Verifique as chaves."
             global_exchange = None
     return global_exchange
 
@@ -92,9 +97,8 @@ HTML_TEMPLATE = """
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
-        .log-box { background: #0f172a; border-left: 3px solid #f87171; padding: 8px; border-radius: 4px; font-size: 11px; color: #fca5a5; word-break: break-all; max-height: 90px; overflow-y: auto; }
+        .log-box { background: #0f172a; border-left: 3px solid #f59e0b; padding: 8px; border-radius: 4px; font-size: 11px; color: #fde68a; word-break: break-all; max-height: 90px; overflow-y: auto; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
-        .history-item { background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
         p { margin: 6px 0; font-size: 13px; }
     </style>
     <script>
@@ -256,7 +260,7 @@ def fetch_data():
         bal = ex.fetch_balance()
         total = float(bal.get('total', {}).get('USDT', 0.0) or 0.0)
         if total > 0:
-            if float(bot_state["initial_balance"]) == 0.0:
+            if float(bot_state["initial_balance"]) == 1000.0:
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
 
@@ -283,8 +287,8 @@ def index():
     return render_template_string(
         HTML_TEMPLATE,
         running=bot_state["running"],
-        initial_balance=float(bot_state["initial_balance"] or 0.0),
-        balance=float(bot_state["balance"] or 0.0),
+        initial_balance=float(bot_state["initial_balance"] or 1000.0),
+        balance=float(bot_state["balance"] or 1000.0),
         realized_pnl=float(bot_state["realized_pnl"] or 0.0),
         active_position=bot_state["active_position"],
         market_data=bot_state["market_data"],
@@ -320,12 +324,12 @@ def toggle():
     secret = str(bot_state["api_secret"] or "").strip()
 
     if not key or not secret:
-        bot_state["log"] = "Erro: Insira as credenciais Bybit em Ajustes!"
+        bot_state["log"] = "Erro: Insira as chaves Bybit em Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
     mode_str = "TESTNET" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = f"Robô ativado ({mode_str})." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = f"Robô ativado na Bybit ({mode_str})." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
