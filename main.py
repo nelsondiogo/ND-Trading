@@ -48,18 +48,17 @@ def get_exchange():
                 }
             })
             
-            # Ativação explícita do modo Sandbox/Demo para a OKX no CCXT
             if bot_state["is_demo"]:
                 exchange.set_sandbox_mode(True)
-                # Garante que o header de simulação está presente nas opções da API v5
                 exchange.headers = {'x-simulated-trading': '1'}
                 
             exchange.load_markets()
             global_exchange = exchange
             bot_state["log"] = "Conexão OKX Demo estabelecida com sucesso."
         except Exception as e:
-            err_msg = str(e) if e else "Erro desconhecido"
-            bot_state["log"] = f"Erro API OKX: {err_msg[:60]}"
+            # Blindagem absoluta contra NoneType
+            err_str = str(e) if e is not None else "Erro desconhecido"
+            bot_state["log"] = str("Erro API OKX: " + err_str[:40])
             global_exchange = None
     return global_exchange
 
@@ -277,7 +276,8 @@ def fetch_data():
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
     except Exception as e:
-        bot_state["log"] = f"Erro dados: {str(e)[:40]}"
+        err_str = str(e) if e is not None else "Erro sync"
+        bot_state["log"] = str("Erro dados: " + err_str[:30])
 
 @app.route('/api/state')
 def api_state():
