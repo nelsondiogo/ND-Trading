@@ -103,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualização fluida em tempo real
+            // Atualização assíncrona leve para não travar a página
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -113,7 +113,7 @@ HTML_TEMPLATE = """
                             if(logBox) logBox.innerText = data.log;
                         }
                     }).catch(err => console.log(err));
-            }, 2500);
+            }, 3000);
         }
     </script>
 </head>
@@ -379,15 +379,14 @@ def fetch_market_and_balance():
 
 @app.route('/api/state')
 def api_state():
+    # Atualiza o mercado em background sem prender a página web
     if bot_state["api_key"] and bot_state["api_secret"]:
-        fetch_market_and_balance()
+        threading.Thread(target=fetch_market_and_balance, daemon=True).start()
     return jsonify({"log": bot_state["log"]})
 
 @app.route('/')
 def index():
-    if bot_state["api_key"] and bot_state["api_secret"]:
-        fetch_market_and_balance()
-        
+    # Rota principal rápida: não bloqueia o carregamento com chamadas síncronas à API
     configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
@@ -423,7 +422,6 @@ def settings():
     except ValueError:
         pass
     
-    fetch_market_and_balance()
     bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
@@ -434,7 +432,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado (Modo Simples e Direto)." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e a operar." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
