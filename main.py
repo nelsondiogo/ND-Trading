@@ -30,19 +30,22 @@ TAKE_PROFIT_PCT = 0.045       # 4.5%
 STOP_LOSS_PCT = 0.012         # 1.2%
 TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
 
-# Instância global otimizada para evitar Rate Limit
 global_exchange = None
 
 def get_exchange():
     global global_exchange
     if global_exchange is None and bot_state["api_key"] and bot_state["api_secret"]:
-        global_exchange = ccxt.bybit({
-            'apiKey': bot_state["api_key"],
-            'secret': bot_state["api_secret"],
-            'enableRateLimit': True,
-            'options': {'defaultType': 'linear'}
-        })
-        global_exchange.load_markets()
+        try:
+            global_exchange = ccxt.bybit({
+                'apiKey': bot_state["api_key"],
+                'secret': bot_state["api_secret"],
+                'enableRateLimit': True,
+                'options': {'defaultType': 'linear'}
+            })
+            global_exchange.load_markets()
+        except Exception as e:
+            logging.error(f"Erro ao iniciar exchange: {e}")
+            global_exchange = None
     return global_exchange
 
 HTML_TEMPLATE = """
@@ -100,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Auto-refresh dos dados e logs a cada 5 segundos em tempo real
+            // Auto-refresh dos dados e logs a cada 5 segundos
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -410,7 +413,7 @@ def index():
 @app.route('/settings', methods=['POST'])
 def settings():
     global global_exchange
-    global_exchange = None # Reseta a conexão para recarregar as chaves novas
+    global_exchange = None 
     
     key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
