@@ -23,7 +23,7 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto (OKX Demo). Insira as credenciais."
+    "log": "Sistema pronto. Insira as credenciais OKX."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
@@ -39,7 +39,8 @@ def get_exchange():
     if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
         if global_exchange is None:
             try:
-                global_exchange = ccxt.okx({
+                # Configuração rigorosa para OKX (suporte nativo a Demo via header x-simulated-trading)
+                config = {
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
                     'password': bot_state["api_password"],
@@ -48,15 +49,21 @@ def get_exchange():
                         'defaultType': 'linear',
                         'adjustForTimeDifference': True
                     }
-                })
+                }
+                
+                if bot_state["is_demo"]:
+                    config['headers'] = {'x-simulated-trading': '1'}
+                
+                global_exchange = ccxt.okx(config)
+                
                 if bot_state["is_demo"]:
                     global_exchange.set_sandbox_mode(True)
                 
                 global_exchange.load_markets()
             except Exception as e:
                 err_msg = str(e)
-                logging.error(f"Erro ao iniciar CCXT OKX: {err_msg}")
-                bot_state["log"] = f"Erro CCXT: {err_msg[:60]}"
+                logging.error(f"Erro crítico CCXT OKX: {err_msg}")
+                bot_state["log"] = f"Erro API: {err_msg[:70]}"
                 global_exchange = None
     return global_exchange
 
@@ -66,7 +73,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OKX SCALPING DEMO</title>
+    <title>OKX SCALPING DIAGNÓSTICO</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -359,6 +366,7 @@ def fetch_market_and_balance():
             bot_state["balance"] = total
     except Exception as e:
         logging.error(f"Erro a ler saldo OKX: {e}")
+        bot_state["log"] = f"Erro Saldo: {str(e)[:50]}"
 
     market_list = []
     for symbol in PAIRS:
@@ -458,7 +466,7 @@ def settings():
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"] or not bot_state["api_password"]:
-        bot_state["log"] = "Erro: Insira as chaves e a password (passphrase) da API OKX!"
+        bot_state["log"] = "Erro: Insira as credenciais OKX!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
