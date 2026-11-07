@@ -34,15 +34,16 @@ global_exchange = None
 
 def get_exchange():
     global global_exchange
-    if global_exchange is None and bot_state["api_key"] and bot_state["api_secret"]:
+    if bot_state["api_key"] and bot_state["api_secret"]:
         try:
-            global_exchange = ccxt.bybit({
-                'apiKey': bot_state["api_key"],
-                'secret': bot_state["api_secret"],
-                'enableRateLimit': True,
-                'options': {'defaultType': 'linear'}
-            })
-            global_exchange.load_markets()
+            if global_exchange is None:
+                global_exchange = ccxt.bybit({
+                    'apiKey': bot_state["api_key"],
+                    'secret': bot_state["api_secret"],
+                    'enableRateLimit': True,
+                    'options': {'defaultType': 'linear'}
+                })
+                global_exchange.load_markets()
         except Exception as e:
             logging.error(f"Erro ao iniciar exchange: {e}")
             global_exchange = None
@@ -54,7 +55,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING PRO</title>
+    <title>ND-SCALPING FORENSIC</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -82,7 +83,7 @@ HTML_TEMPLATE = """
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
-        .log-box { background: #0f172a; border-left: 3px solid #38bdf8; padding: 8px; border-radius: 4px; font-size: 11px; color: #cbd5e1; word-break: break-all; max-height: 80px; overflow-y: auto; }
+        .log-box { background: #0f172a; border-left: 3px solid #f87171; padding: 8px; border-radius: 4px; font-size: 11px; color: #fca5a5; word-break: break-all; max-height: 90px; overflow-y: auto; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
         .history-item { background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
         p { margin: 6px 0; font-size: 13px; }
@@ -103,7 +104,6 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualização contínua leve de dados e logs
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -119,7 +119,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>ND-SCALPING</h1>
+        <h1>ND-SCALPING FORENSIC</h1>
 
         <!-- ABA DASHBOARD -->
         <div id="dashboard" class="tab-content active">
@@ -146,7 +146,6 @@ HTML_TEMPLATE = """
                 {% if active_position %}
                     <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
                     <p>Entrada: <b>{{ active_position.entry }}</b> | PNL: <b style="color: {{ '#4ade80' if active_position.pnl >= 0 else '#f87171' }}">{{ "+%.2f"|format(active_position.pnl) if active_position.pnl >= 0 else "%.2f"|format(active_position.pnl) }}%</b></p>
-                    <small style="color: #38bdf8;">Muralha Trailing: {{ 'ATIVADA' if active_position.trailing_active else 'Aguardando recuo' }}</small>
                 {% else %}
                     <p style="text-align: center; color: #94a3b8; font-size: 12px;">Em Stand-by (Aguardando Sinal).</p>
                 {% endif %}
@@ -169,7 +168,7 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="card">
-                <h3>Log do Sistema</h3>
+                <h3>Log de Auditoria Bybit</h3>
                 <div class="log-box">{{ log }}</div>
             </div>
         </div>
@@ -190,7 +189,7 @@ HTML_TEMPLATE = """
             {% endif %}
 
             <div class="card">
-                <h3>Mercado em Tempo Real</h3>
+                <h3>Mercado Perpétuo (Futuros)</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
@@ -321,8 +320,10 @@ def fetch_market_and_balance():
     try:
         exchange = get_exchange()
         if not exchange:
+            bot_state["log"] = "Erro: Falha ao ligar à API da Bybit."
             return
         
+        # Leitura direta do saldo real da Bybit
         bal = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
         if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
@@ -349,13 +350,14 @@ def fetch_market_and_balance():
                 ticker = exchange.fetch_ticker(symbol)
                 current_price = ticker.get('last', 0.0)
                 
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=30)
                 closes = [c[4] for c in ohlcv]
                 rsi = calculate_rsi(closes)
 
-                if rsi < 38:
+                # Limiar dinâmico para acompanhar oscilações rápidas de scalping
+                if rsi < 42:
                     trend = "LONG"
-                elif rsi > 62:
+                elif rsi > 58:
                     trend = "SHORT"
                 else:
                     trend = "NEUTRO"
@@ -375,20 +377,16 @@ def fetch_market_and_balance():
             bot_state["market_data"] = market_list
             
     except Exception as e:
+        err_str = str(e)
+        bot_state["log"] = f"Erro de Sincronização: {err_str[:60]}"
         logging.error(f"Erro na sincronização: {e}")
 
 @app.route('/api/state')
 def api_state():
-    if bot_state["api_key"] and bot_state["api_secret"]:
-        fetch_market_and_balance()
     return jsonify({"log": bot_state["log"]})
 
 @app.route('/')
 def index():
-    # Atualiza o saldo e o mercado imediatamente ao abrir ou atualizar a página, sem precisar do Play
-    if bot_state["api_key"] and bot_state["api_secret"]:
-        fetch_market_and_balance()
-        
     configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
@@ -425,7 +423,7 @@ def settings():
         pass
     
     fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas."
+    bot_state["log"] = "Definições guardadas e sincronizadas."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -439,6 +437,9 @@ def toggle():
     return redirect(url_for('index'))
 
 def background_loop():
+    time.sleep(1)
+    fetch_market_and_balance()
+    
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
@@ -527,7 +528,8 @@ def background_loop():
                                 
                                 try:
                                     notional = bot_state["balance"] * bot_state["leverage"] * 0.95
-                                    amount = notional / item["price"]
+                                    raw_amount = notional / item["price"]
+                                    amount = float(exchange.amount_to_precision(symbol, raw_amount))
                                     
                                     order = exchange.create_market_order(symbol, side, amount)
                                     execution_price = order.get('average', item["price"])
@@ -536,7 +538,7 @@ def background_loop():
                                         "pair": item["pair"],
                                         "symbol": symbol,
                                         "side": item["trend"],
-                                        "entry": execution_price,
+                                           "entry": execution_price,
                                         "amount": amount,
                                         "highest_price": execution_price,
                                         "pnl": 0.0,
@@ -545,7 +547,9 @@ def background_loop():
                                     bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']})"
                                     break
                                 except Exception as ord_err:
-                                    bot_state["log"] = f"Erro Ordem: {str(ord_err)[:60]}"
+                                    err_msg = str(ord_err)
+                                    bot_state["log"] = f"REJEITADO BYBIT: {err_msg[:80]}"
+                                    logging.error(f"Erro Ordem Bybit: {err_msg}")
 
         except Exception as e:
             logging.error(f"Erro no loop: {e}")
