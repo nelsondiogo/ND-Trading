@@ -1,6 +1,7 @@
 import time
 import threading
 import logging
+import datetime
 import ccxt
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 
@@ -20,10 +21,10 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "history": [],
+    "last_update": "Aguardando...",
     "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
-# Pares lineares oficiais Bybit V5
 PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045       # 4.5%
@@ -35,8 +36,8 @@ global_exchange = None
 def get_exchange():
     global global_exchange
     if bot_state["api_key"] and bot_state["api_secret"]:
-        try:
-            if global_exchange is None:
+        if global_exchange is None:
+            try:
                 global_exchange = ccxt.bybit({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
@@ -44,9 +45,9 @@ def get_exchange():
                     'options': {'defaultType': 'linear'}
                 })
                 global_exchange.load_markets()
-        except Exception as e:
-            logging.error(f"Erro ao iniciar exchange: {e}")
-            global_exchange = None
+            except Exception as e:
+                logging.error(f"Erro ao iniciar CCXT: {e}")
+                global_exchange = None
     return global_exchange
 
 HTML_TEMPLATE = """
@@ -55,21 +56,22 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING FORENSIC</title>
+    <title>ND-SCALPING REALTIME</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
-        h1 { color: #4ade80; text-align: center; font-size: 18px; margin: 8px 0 12px 0; font-weight: 700; letter-spacing: 0.5px; }
+        h1 { color: #4ade80; text-align: center; font-size: 18px; margin: 8px 0 4px 0; font-weight: 700; }
+        .clock { text-align: center; font-size: 11px; color: #38bdf8; margin-bottom: 10px; font-weight: bold; }
         
         .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
         .balance-box { background: #1e293b; border: 1px solid #334155; padding: 10px; border-radius: 8px; text-align: center; }
         .balance-box span { display: block; font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
         .balance-box strong { font-size: 14px; color: #4ade80; }
         
-        .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.3px; }
+        .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
+        .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; }
         
-        input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; max-width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
+        input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
@@ -78,8 +80,7 @@ HTML_TEMPLATE = """
         .nav-btn.active { color: #4ade80; }
         
         .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 10px; }
-        .btn-circle { width: 44px; height: 44px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; box-shadow: 0 3px 8px rgba(0,0,0,0.3); color: white; transition: transform 0.1s; }
-        .btn-circle:active { transform: scale(0.95); }
+        .btn-circle { width: 44px; height: 44px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; color: white; }
         .btn-circle.start { background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
 
@@ -112,14 +113,19 @@ HTML_TEMPLATE = """
                             let logBox = document.querySelector('.log-box');
                             if(logBox) logBox.innerText = data.log;
                         }
+                        if(data.last_update) {
+                            let clock = document.querySelector('.clock');
+                            if(clock) clock.innerText = "Sincronizado: " + data.last_update;
+                        }
                     }).catch(err => console.log(err));
-            }, 3000);
+            }, 2000);
         }
     </script>
 </head>
 <body>
     <div class="container">
-        <h1>ND-SCALPING FORENSIC</h1>
+        <h1>ND-SCALPING</h1>
+        <div class="clock">Sincronizado: {{ last_update }}</div>
 
         <!-- ABA DASHBOARD -->
         <div id="dashboard" class="tab-content active">
@@ -137,7 +143,6 @@ HTML_TEMPLATE = """
             {% else %}
             <div class="card" style="border-left: 3px solid #f87171; text-align: center;">
                 <p style="color: #f87171; margin: 0; font-weight: bold; font-size: 12px;">Chaves API em falta!</p>
-                <small style="color: #94a3b8; font-size: 11px;">Configure na aba Ajustes.</small>
             </div>
             {% endif %}
 
@@ -168,28 +173,15 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="card">
-                <h3>Log de Auditoria Bybit</h3>
+                <h3>Log do Sistema</h3>
                 <div class="log-box">{{ log }}</div>
             </div>
         </div>
 
         <!-- ABA MERCADO -->
         <div id="mercado" class="tab-content">
-            {% if configured %}
-            <div class="balance-grid" style="margin-bottom: 10px;">
-                <div class="balance-box">
-                    <span>Saldo Disponível</span>
-                    <strong>+{{ "%.4f"|format(balance) }}</strong>
-                </div>
-                <div class="balance-box">
-                    <span>Ativos</span>
-                    <strong style="color: #38bdf8;">{{ market_data|length }} Pares</strong>
-                </div>
-            </div>
-            {% endif %}
-
             <div class="card">
-                <h3>Mercado Perpétuo (Futuros)</h3>
+                <h3>Mercado em Tempo Real</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
@@ -201,35 +193,13 @@ HTML_TEMPLATE = """
                     </span>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">{{ 'Insira as chaves em Ajustes.' if not configured else 'A sincronizar mercado...' }}</p>
+                <p style="text-align: center; color: #94a3b8; font-size: 12px;">A carregar mercado...</p>
                 {% endfor %}
             </div>
         </div>
 
         <!-- ABA HISTÓRICO -->
         <div id="historico" class="tab-content">
-            <div class="card">
-                <h3>Resumo Geral</h3>
-                {% set total_trades = history|length %}
-                {% set pos_count = namespace(val=0) %}
-                {% set neg_count = namespace(val=0) %}
-                {% set total_usdt = namespace(val=0.0) %}
-                {% set total_pct = namespace(val=0.0) %}
-                
-                {% for h in history %}
-                    {% set total_usdt.val = total_usdt.val + h.pnl_usdt %}
-                    {% set total_pct.val = total_pct.val + h.pnl_pct %}
-                    {% if h.pnl_usdt >= 0 %}
-                        {% set pos_count.val = pos_count.val + 1 %}
-                    {% else %}
-                        {% set neg_count.val = neg_count.val + 1 %}
-                    {% endif %}
-                {% endfor %}
-
-                <p style="font-size: 12px;">Total: <b>{{ total_trades }}</b> | Pos: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Neg: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
-                <p style="font-size: 12px;">Resultado: <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b> ({{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%)</p>
-            </div>
-
             <div class="card">
                 <h3>Registo de Operações</h3>
                 {% for h in history %}
@@ -241,10 +211,7 @@ HTML_TEMPLATE = """
                     <div style="text-align: right;">
                         <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold; font-size: 12px;">
                             {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }}
-                        </span><br>
-                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }}; font-size: 10px;">
-                            {{ "+%.2f"|format(h.pnl_pct) if h.pnl_pct >= 0 else "%.2f"|format(h.pnl_pct) }}%
-                        </small>
+                        </span>
                     </div>
                 </div>
                 {% else %}
@@ -272,14 +239,13 @@ HTML_TEMPLATE = """
             </div>
         </div>
 
-        <!-- BARRA DE NAVEGAÇÃO INFERIOR -->
         <div class="nav-bar">
             <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊<br>Dashboard</button>
             <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈<br>Mercado</button>
             
             <div class="center-toggle-container">
                 <form action="/toggle" method="POST" style="margin:0;">
-                    <button type="submit" class="btn-circle {{ 'stop' if running else 'start' }}" title="{{ 'Parar Robô' if running else 'Iniciar Robô' }}">
+                    <button type="submit" class="btn-circle {{ 'stop' if running else 'start' }}">
                         {{ '⏹' if running else '▶' }}
                     </button>
                 </form>
@@ -317,13 +283,13 @@ def calculate_rsi(closes, period=14):
 def fetch_market_and_balance():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
         return
+    exchange = get_exchange()
+    if not exchange:
+        bot_state["log"] = "Erro: Falha na instância CCXT."
+        return
+
+    # Leitura do Saldo
     try:
-        exchange = get_exchange()
-        if not exchange:
-            bot_state["log"] = "Erro: Falha ao ligar à API da Bybit."
-            return
-        
-        # Leitura direta do saldo real da Bybit
         bal = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
         if 'total' in bal and 'USDT' in bal['total'] and bal['total']['USDT'] is not None:
@@ -335,55 +301,53 @@ def fetch_market_and_balance():
                     if coin.get('coin') == 'USDT':
                         total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0))
                         break
-        
-        if total == 0.0 and 'free' in bal and 'USDT' in bal['free']:
-            total = float(bal['free'].get('USDT', 0.0)) + float(bal.get('used', {}).get('USDT', 0.0))
-
         if total > 0:
             if bot_state["initial_balance"] == 0.0:
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
-
-        market_list = []
-        for symbol in PAIRS:
-            try:
-                ticker = exchange.fetch_ticker(symbol)
-                current_price = ticker.get('last', 0.0)
-                
-                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=30)
-                closes = [c[4] for c in ohlcv]
-                rsi = calculate_rsi(closes)
-
-                # Limiar dinâmico para acompanhar oscilações rápidas de scalping
-                if rsi < 42:
-                    trend = "LONG"
-                elif rsi > 58:
-                    trend = "SHORT"
-                else:
-                    trend = "NEUTRO"
-
-                clean_name = symbol.split('/')[0]
-                market_list.append({
-                    "pair": clean_name,
-                    "symbol": symbol,
-                    "price": current_price,
-                    "rsi_5m": rsi,
-                    "trend": trend
-                })
-            except Exception as ex:
-                logging.error(f"Erro ao ler par {symbol}: {ex}")
-
-        if market_list:
-            bot_state["market_data"] = market_list
-            
     except Exception as e:
-        err_str = str(e)
-        bot_state["log"] = f"Erro de Sincronização: {err_str[:60]}"
-        logging.error(f"Erro na sincronização: {e}")
+        logging.error(f"Erro saldo: {e}")
+
+    # Leitura do Mercado
+    market_list = []
+    for symbol in PAIRS:
+        try:
+            ticker = exchange.fetch_ticker(symbol)
+            current_price = ticker.get('last', 0.0)
+            
+            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=25)
+            closes = [c[4] for c in ohlcv]
+            rsi = calculate_rsi(closes)
+
+            if rsi < 35:
+                trend = "LONG"
+            elif rsi > 65:
+                trend = "SHORT"
+            else:
+                trend = "NEUTRO"
+
+            clean_name = symbol.split('/')[0]
+            market_list.append({
+                "pair": clean_name,
+                "symbol": symbol,
+                "price": current_price,
+                "rsi_5m": rsi,
+                "trend": trend
+            })
+        except Exception as ex:
+            logging.error(f"Erro no par {symbol}: {ex}")
+
+    if market_list:
+        bot_state["market_data"] = market_list
+    
+    bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
 
 @app.route('/api/state')
 def api_state():
-    return jsonify({"log": bot_state["log"]})
+    return jsonify({
+        "log": bot_state["log"],
+        "last_update": bot_state["last_update"]
+    })
 
 @app.route('/')
 def index():
@@ -401,6 +365,7 @@ def index():
         api_key=bot_state["api_key"],
         api_secret="" if not bot_state["api_secret"] else "********",
         leverage=bot_state["leverage"],
+        last_update=bot_state["last_update"],
         log=bot_state["log"]
     )
 
@@ -422,110 +387,34 @@ def settings():
     except ValueError:
         pass
     
-    fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas e sincronizadas."
+    bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves API nos Ajustes primeiro!"
+        bot_state["log"] = "Erro: Insira as chaves API primeiro!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e a operar." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
-    time.sleep(1)
-    fetch_market_and_balance()
-    
+    global global_exchange
     while True:
         try:
             if bot_state["api_key"] and bot_state["api_secret"]:
                 fetch_market_and_balance()
                 
                 exchange = get_exchange()
-                if not exchange:
-                    time.sleep(2)
-                    continue
-
-                pos = bot_state["active_position"]
-                if bot_state["running"]:
-                    if pos:
-                        symbol = pos["symbol"]
-                        ticker = exchange.fetch_ticker(symbol)
-                        current_price = ticker.get('last', 0.0)
-                        entry_price = pos["entry"]
-                        side = pos["side"]
-
-                        if side == "LONG":
-                            pnl_pct = (current_price - entry_price) / entry_price
-                        else:
-                            pnl_pct = (entry_price - current_price) / entry_price
-                        
-                        pos["pnl"] = pnl_pct * 100.0
-
-                        if pnl_pct >= TRAILING_ACTIVATE_PCT:
-                            if not pos["trailing_active"]:
-                                pos["trailing_active"] = True
-                                pos["highest_price"] = current_price
-                                bot_state["log"] = f"Muralha ativada em {pos['pair']} (+{pnl_pct*100:.2f}%)!"
-
-                        if pos["trailing_active"]:
-                            if side == "LONG" and current_price > pos["highest_price"]:
-                                pos["highest_price"] = current_price
-                            elif side == "SHORT" and current_price < pos["highest_price"]:
-                                pos["highest_price"] = current_price
-
-                            if side == "LONG" and current_price < pos["highest_price"]:
-                                exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                                bot_state["log"] = f"Fechando {pos['pair']} por recuo."
-                                bot_state["history"].append({
-                                    "pair": pos["pair"], "side": side,
-                                    "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop"
-                                })
-                                bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
-                                bot_state["active_position"] = None
-                            elif side == "SHORT" and current_price > pos["highest_price"]:
-                                exchange.create_market_order(symbol, 'buy' if side=='SHORT' else 'sell', pos['amount'])
-                                bot_state["log"] = f"Fechando {pos['pair']} por recuo."
-                                bot_state["history"].append({
-                                    "pair": pos["pair"], "side": side,
-                                    "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop"
-                                })
-                                bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
-                                bot_state["active_position"] = None
-
-                        elif pnl_pct >= TAKE_PROFIT_PCT:
-                            exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                            bot_state["log"] = f"Take Profit atingido em {pos['pair']}!"
-                            bot_state["history"].append({
-                                "pair": pos["pair"], "side": side,
-                                "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                "pnl_pct": pos["pnl"], "reason": "Take Profit"
-                            })
-                            bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
-                            bot_state["active_position"] = None
-
-                        elif pnl_pct <= -STOP_LOSS_PCT:
-                            exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                            bot_state["log"] = f"Stop Loss acionado em {pos['pair']}."
-                            bot_state["history"].append({
-                                "pair": pos["pair"], "side": side,
-                                "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                "pnl_pct": pos["pnl"], "reason": "Stop Loss"
-                            })
-                            bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
-                            bot_state["active_position"] = None
-                    else:
+                if exchange and bot_state["running"]:
+                    pos = bot_state["active_position"]
+                    if not pos:
                         for item in bot_state["market_data"]:
                             if item["trend"] in ["LONG", "SHORT"]:
                                 symbol = item["symbol"]
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
-                                
                                 try:
                                     notional = bot_state["balance"] * bot_state["leverage"] * 0.95
                                     raw_amount = notional / item["price"]
@@ -538,21 +427,19 @@ def background_loop():
                                         "pair": item["pair"],
                                         "symbol": symbol,
                                         "side": item["trend"],
-                                           "entry": execution_price,
+                                        "entry": execution_price,
                                         "amount": amount,
                                         "highest_price": execution_price,
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']})"
+                                    bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']})"
                                     break
                                 except Exception as ord_err:
-                                    err_msg = str(ord_err)
-                                    bot_state["log"] = f"REJEITADO BYBIT: {err_msg[:80]}"
-                                    logging.error(f"Erro Ordem Bybit: {err_msg}")
-
+                                    bot_state["log"] = f"Erro ao abrir ordem: {str(ord_err)[:70]}"
         except Exception as e:
-            logging.error(f"Erro no loop: {e}")
+            logging.error(f"Erro no loop principal: {e}")
+            global_exchange = None  # Reseta a conexão para reconectar no próximo ciclo
         
         time.sleep(2)
 
