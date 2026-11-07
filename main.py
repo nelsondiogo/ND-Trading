@@ -13,7 +13,8 @@ bot_state = {
     "running": False,
     "api_key": "",
     "api_secret": "",
-    "is_testnet": False,
+    "api_password": "",
+    "is_demo": True, # Ativado por defeito para a Demo Trading da OKX
     "leverage": 21,
     "initial_balance": 0.0,
     "balance": 0.0,
@@ -22,10 +23,10 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto. Insira as chaves em Ajustes."
+    "log": "Sistema pronto (OKX Demo). Insira as credenciais em Ajustes."
 }
 
-# Pares oficiais validados na Bybit Linear
+# Pares de futuros lineares validados na OKX
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045
@@ -39,18 +40,21 @@ def get_exchange():
     if bot_state["api_key"] and bot_state["api_secret"]:
         if global_exchange is None:
             try:
-                global_exchange = ccxt.bybit({
+                global_exchange = ccxt.okx({
                     'apiKey': bot_state["api_key"],
                     'secret': bot_state["api_secret"],
+                    'password': bot_state["api_password"],
                     'enableRateLimit': True,
                     'options': {
                         'defaultType': 'linear',
                         'adjustForTimeDifference': True
                     }
                 })
+                # Ativa o modo Sandbox/Demo da OKX rigorosamente
+                global_exchange.set_sandbox_mode(bot_state["is_demo"])
                 global_exchange.load_markets()
             except Exception as e:
-                logging.error(f"Erro ao iniciar CCXT: {e}")
+                logging.error(f"Erro ao iniciar CCXT OKX: {e}")
                 global_exchange = None
     return global_exchange
 
@@ -60,7 +64,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING FORENSIC</title>
+    <title>ND-SCALPING OKX DEMO</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -76,6 +80,8 @@ HTML_TEMPLATE = """
         .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; }
         
         input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
+        .checkbox-container { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; color: #cbd5e1; cursor: pointer; }
+        
         .tab-content { display: none; }
         .tab-content.active { display: block; }
         
@@ -128,7 +134,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>ND-SCALPING</h1>
+        <h1>OKX SCALPING</h1>
         <div class="clock">Sincronizado: {{ last_update }}</div>
 
         <!-- ABA DASHBOARD -->
@@ -137,16 +143,16 @@ HTML_TEMPLATE = """
             <div class="balance-grid">
                 <div class="balance-box">
                     <span>Inicial</span>
-                    <strong>+{{ "%.6f"|format(initial_balance) }}</strong>
+                    <strong>+{{ "%.2f"|format(initial_balance) }}</strong>
                 </div>
                 <div class="balance-box">
-                    <span>Atual (Corretora)</span>
-                    <strong>+{{ "%.6f"|format(balance) }}</strong>
+                    <span>Disponível ({{ 'DEMO' if is_demo else 'REAL' }})</span>
+                    <strong>+{{ "%.2f"|format(balance) }}</strong>
                 </div>
             </div>
             {% else %}
             <div class="card" style="border-left: 3px solid #f87171; text-align: center;">
-                <p style="color: #f87171; margin: 0; font-weight: bold; font-size: 12px;">Chaves API em falta!</p>
+                <p style="color: #f87171; margin: 0; font-weight: bold; font-size: 12px;">Credenciais OKX em falta!</p>
             </div>
             {% endif %}
 
@@ -162,7 +168,7 @@ HTML_TEMPLATE = """
 
             <div class="card">
                 <h3>Capital & Alavancagem</h3>
-                <p>Alavancagem: <b>{{ leverage }}x</b> | Poder: <b>+{{ "%.4f"|format(balance * leverage) }}</b></p>
+                <p>Alavancagem: <b>{{ leverage }}x</b> | Poder: <b>+{{ "%.2f"|format(balance * leverage) }}</b></p>
             </div>
 
             <div class="balance-grid">
@@ -187,8 +193,8 @@ HTML_TEMPLATE = """
             {% if configured %}
             <div class="balance-grid" style="margin-bottom: 10px;">
                 <div class="balance-box">
-                    <span>Saldo Real</span>
-                    <strong>+{{ "%.4f"|format(balance) }}</strong>
+                    <span>Saldo OKX</span>
+                    <strong>+{{ "%.2f"|format(balance) }}</strong>
                 </div>
                 <div class="balance-box">
                     <span>Ativos</span>
@@ -265,7 +271,7 @@ HTML_TEMPLATE = """
         <!-- ABA AJUSTES -->
         <div id="ajustes" class="tab-content">
             <div class="card">
-                <h3>Configuração API</h3>
+                <h3>Configuração OKX API</h3>
                 <form action="/settings" method="POST">
                     <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
                     <input type="text" name="api_key" value="{{ api_key }}" required>
@@ -273,8 +279,16 @@ HTML_TEMPLATE = """
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
                     <input type="password" name="api_secret" value="{{ api_secret }}" required>
                     
+                    <label style="font-size: 11px; color: #94a3b8;">API Password (Passphrase):</label>
+                    <input type="password" name="api_password" value="{{ api_password }}" required>
+                    
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
+                    
+                    <label class="checkbox-container">
+                        <input type="checkbox" name="is_demo" {% if is_demo %}checked{% endif %}>
+                        Usar Modo Demo / Sandbox (Testes)
+                    </label>
                     
                     <button type="submit" style="width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; background: #16a34a; color: white; margin-top: 6px;">Guardar Definições</button>
                 </form>
@@ -327,29 +341,23 @@ def fetch_market_and_balance():
         return
     exchange = get_exchange()
     if not exchange:
-        bot_state["log"] = "Erro: Falha na instância CCXT."
+        bot_state["log"] = "Erro: Falha na instância CCXT OKX."
         return
 
     try:
-        balance_data = exchange.fetch_balance({'type': 'unified'})
+        balance_data = exchange.fetch_balance()
         total = 0.0
-        if 'info' in balance_data and isinstance(balance_data['info'], dict):
-            res_list = balance_data['info'].get('result', {}).get('list', [])
-            if res_list:
-                for coin in res_list[0].get('coin', []):
-                    if coin.get('coin') == 'USDT':
-                        total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0) or coin.get('availableToWithdraw', 0.0))
-                        break
-        
-        if total == 0.0 and 'total' in balance_data and 'USDT' in balance_data['total']:
-            total = float(balance_data['total']['USDT'] or 0.0)
+        if 'total' in balance_data and 'USDT' in balance_data['total'] and balance_data['total']['USDT'] is not None:
+            total = float(balance_data['total']['USDT'])
+        elif 'free' in balance_data and 'USDT' in balance_data['free'] and balance_data['free']['USDT'] is not None:
+            total = float(balance_data['free']['USDT'])
 
         if total > 0:
             if bot_state["initial_balance"] == 0.0:
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
     except Exception as e:
-        logging.error(f"Erro a ler saldo real da corretora: {e}")
+        logging.error(f"Erro a ler saldo OKX: {e}")
 
     market_list = []
     for symbol in PAIRS:
@@ -411,6 +419,8 @@ def index():
         history=bot_state["history"],
         api_key=bot_state["api_key"],
         api_secret="" if not bot_state["api_secret"] else "********",
+        api_password="" if not bot_state["api_password"] else "********",
+        is_demo=bot_state["is_demo"],
         leverage=bot_state["leverage"],
         last_update=bot_state["last_update"],
         log=bot_state["log"]
@@ -423,11 +433,17 @@ def settings():
     
     key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
+    password = request.form.get("api_password", "").strip()
+    is_demo_val = True if request.form.get("is_demo") else False
     
     if key and key != "********":
         bot_state["api_key"] = key
     if secret and not secret.startswith("****") and secret != "********":
         bot_state["api_secret"] = secret
+    if password and password != "********":
+        bot_state["api_password"] = password
+        
+    bot_state["is_demo"] = is_demo_val
         
     try:
         bot_state["leverage"] = int(request.form.get("leverage", 21))
@@ -435,17 +451,18 @@ def settings():
         pass
     
     fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas."
+    bot_state["log"] = f"Definições OKX guardadas. Modo: {'DEMO' if bot_state['is_demo'] else 'REAL'}."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
-    if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves API primeiro!"
+    if not bot_state["api_key"] or not bot_state["api_secret"] or not bot_state["api_password"]:
+        bot_state["log"] = "Erro: Insira as chaves e a password (passphrase) da API OKX!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado." if bot_state["running"] else "Robô parado."
+    mode_str = "DEMO" if bot_state["is_demo"] else "REAL"
+    bot_state["log"] = f"Robô ativado na OKX ({mode_str})." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -481,14 +498,14 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']})"
+                                    bot_state["log"] = f"Ordem aberta (OKX): {item['pair']} ({item['trend']})"
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"REJEITADO PELA BYBIT: {err_str[:70]}"
-                                    logging.error(f"Erro ao abrir ordem: {err_str}")
+                                    bot_state["log"] = f"REJEITADO OKX: {err_str[:70]}"
+                                    logging.error(f"Erro ao abrir ordem OKX: {err_str}")
         except Exception as e:
-            logging.error(f"Erro no loop principal: {e}")
+            logging.error(f"Erro no loop principal OKX: {e}")
             global_exchange = None
         
         time.sleep(2)
