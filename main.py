@@ -103,6 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
+            // Atualização fluida em tempo real
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -112,7 +113,7 @@ HTML_TEMPLATE = """
                             if(logBox) logBox.innerText = data.log;
                         }
                     }).catch(err => console.log(err));
-            }, 3000);
+            }, 2500);
         }
     </script>
 </head>
@@ -145,9 +146,9 @@ HTML_TEMPLATE = """
                 {% if active_position %}
                     <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
                     <p>Entrada: <b>{{ active_position.entry }}</b> | PNL: <b style="color: {{ '#4ade80' if active_position.pnl >= 0 else '#f87171' }}">{{ "+%.2f"|format(active_position.pnl) if active_position.pnl >= 0 else "%.2f"|format(active_position.pnl) }}%</b></p>
-                    <small style="color: #38bdf8;">Muralha Trailing: {{ 'ATIVADA (Rigorosa)' if active_position.trailing_active else 'Inativa (<0.5%)' }}</small>
+                    <small style="color: #38bdf8;">Muralha Trailing: {{ 'ATIVADA' if active_position.trailing_active else 'Aguardando recuo' }}</small>
                 {% else %}
-                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhuma posição ativa.</p>
+                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Em Stand-by (Aguardando Sinal).</p>
                 {% endif %}
             </div>
 
@@ -189,11 +190,11 @@ HTML_TEMPLATE = """
             {% endif %}
 
             <div class="card">
-                <h3>Mercado em Tempo Real (5m / 15m)</h3>
+                <h3>Mercado em Tempo Real</h3>
                 {% for item in market_data %}
                 <div class="market-item">
                     <div>
-                        <b>{{ item.pair }}</b> <small style="color: #94a3b8;">(RSI 5m: {{ "%.1f"|format(item.rsi_5m) }} | 15m: {{ "%.1f"|format(item.rsi_15m) }})</small><br>
+                        <b>{{ item.pair }}</b> <small style="color: #94a3b8;">(RSI: {{ "%.1f"|format(item.rsi_5m) }})</small><br>
                         <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
                     </div>
                     <span style="color: {{ '#4ade80' if item.trend == 'LONG' else ('#f87171' if item.trend == 'SHORT' else '#94a3b8') }}; font-weight: bold; font-size: 12px;">
@@ -201,7 +202,7 @@ HTML_TEMPLATE = """
                     </span>
                 </div>
                 {% else %}
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">{{ 'Insira as chaves em Ajustes.' if not configured else 'A sincronizar com a Bybit...' }}</p>
+                <p style="text-align: center; color: #94a3b8; font-size: 12px;">{{ 'Insira as chaves em Ajustes.' if not configured else 'A sincronizar mercado...' }}</p>
                 {% endfor %}
             </div>
         </div>
@@ -348,17 +349,13 @@ def fetch_market_and_balance():
                 ticker = exchange.fetch_ticker(symbol)
                 current_price = ticker.get('last', 0.0)
                 
-                ohlcv_5m = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
-                closes_5m = [c[4] for c in ohlcv_5m]
-                rsi_5m = calculate_rsi(closes_5m)
-                
-                ohlcv_15m = exchange.fetch_ohlcv(symbol, timeframe='15m', limit=50)
-                closes_15m = [c[4] for c in ohlcv_15m]
-                rsi_15m = calculate_rsi(closes_15m)
+                ohlcv = exchange.fetch_ohlcv(symbol, timeframe='5m', limit=50)
+                closes = [c[4] for c in ohlcv]
+                rsi = calculate_rsi(closes)
 
-                if rsi_5m < 38:
+                if rsi < 38:
                     trend = "LONG"
-                elif rsi_5m > 62:
+                elif rsi > 62:
                     trend = "SHORT"
                 else:
                     trend = "NEUTRO"
@@ -368,18 +365,17 @@ def fetch_market_and_balance():
                     "pair": clean_name,
                     "symbol": symbol,
                     "price": current_price,
-                    "rsi_5m": rsi_5m,
-                    "rsi_15m": rsi_15m,
+                    "rsi_5m": rsi,
                     "trend": trend
                 })
             except Exception as ex:
-                logging.error(f"Erro ao ler ticker/vela de {symbol}: {ex}")
+                logging.error(f"Erro ao ler par {symbol}: {ex}")
 
         if market_list:
             bot_state["market_data"] = market_list
             
     except Exception as e:
-        logging.error(f"Erro na sincronização de mercado: {e}")
+        logging.error(f"Erro na sincronização: {e}")
 
 @app.route('/api/state')
 def api_state():
@@ -428,7 +424,7 @@ def settings():
         pass
     
     fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas. Sincronizado com a Bybit."
+    bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -438,7 +434,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado (Modo Original)." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado (Modo Simples e Direto)." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -482,43 +478,43 @@ def background_loop():
 
                             if side == "LONG" and current_price < pos["highest_price"]:
                                 exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                                bot_state["log"] = f"Muralha rigorosa! Fechando {pos['pair']} por recuo."
+                                bot_state["log"] = f"Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop Rigoroso"
+                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop"
                                 })
                                 bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                                 bot_state["active_position"] = None
                             elif side == "SHORT" and current_price > pos["highest_price"]:
                                 exchange.create_market_order(symbol, 'buy' if side=='SHORT' else 'sell', pos['amount'])
-                                bot_state["log"] = f"Muralha rigorosa! Fechando {pos['pair']} por recuo."
+                                bot_state["log"] = f"Fechando {pos['pair']} por recuo."
                                 bot_state["history"].append({
                                     "pair": pos["pair"], "side": side,
                                     "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop Rigoroso"
+                                    "pnl_pct": pos["pnl"], "reason": "Trailing Stop"
                                 })
                                 bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                                 bot_state["active_position"] = None
 
                         elif pnl_pct >= TAKE_PROFIT_PCT:
                             exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                            bot_state["log"] = f"Take Profit (+4.5%) atingido em {pos['pair']}!"
+                            bot_state["log"] = f"Take Profit atingido em {pos['pair']}!"
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
                                 "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                "pnl_pct": pos["pnl"], "reason": "Take Profit Target"
+                                "pnl_pct": pos["pnl"], "reason": "Take Profit"
                             })
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
 
                         elif pnl_pct <= -STOP_LOSS_PCT:
                             exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
-                            bot_state["log"] = f"Stop Loss (-1.2%) acionado em {pos['pair']}."
+                            bot_state["log"] = f"Stop Loss acionado em {pos['pair']}."
                             bot_state["history"].append({
                                 "pair": pos["pair"], "side": side,
                                 "pnl_usdt": (pos["pnl"]/100) * bot_state["balance"],
-                                "pnl_pct": pos["pnl"], "reason": "Stop Loss Limit"
+                                "pnl_pct": pos["pnl"], "reason": "Stop Loss"
                             })
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
@@ -529,7 +525,6 @@ def background_loop():
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
                                 try:
-                                    # Lógica original direta de cálculo baseada no poder total da conta
                                     notional = bot_state["balance"] * bot_state["leverage"] * 0.95
                                     amount = notional / item["price"]
                                     
@@ -546,15 +541,13 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']}) a {execution_price}"
+                                    bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']})"
                                     break
                                 except Exception as ord_err:
-                                    err_str = str(ord_err)
-                                    bot_state["log"] = f"Erro Ordem: {err_str[:90]}"
-                                    logging.error(f"Erro Ordem Bybit: {err_str}")
+                                    bot_state["log"] = f"Erro Ordem: {str(ord_err)[:60]}"
 
         except Exception as e:
-            logging.error(f"Erro crítico no background_loop: {e}")
+            logging.error(f"Erro no loop: {e}")
         
         time.sleep(2)
 
