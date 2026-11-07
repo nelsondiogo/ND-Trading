@@ -28,10 +28,6 @@ bot_state = {
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
 
-TAKE_PROFIT_PCT = 0.045
-STOP_LOSS_PCT = 0.012
-TRAILING_ACTIVATE_PCT = 0.005
-
 global_exchange = None
 
 def get_exchange():
@@ -67,7 +63,7 @@ def get_exchange():
             except Exception as e:
                 err_msg = str(e)
                 logging.error(f"Erro crítico CCXT OKX: {err_msg}")
-                bot_state["log"] = str(f"Erro API: {err_msg[:65]}")
+                bot_state["log"] = f"Erro API: {err_msg[:60]}"
                 global_exchange = None
     return global_exchange
 
@@ -238,46 +234,7 @@ HTML_TEMPLATE = """
         <div id="historico" class="tab-content">
             <div class="card">
                 <h3>Resumo Geral de Operações</h3>
-                {% set total_trades = history|length %}
-                {% set pos_count = namespace(val=0) %}
-                {% set neg_count = namespace(val=0) %}
-                {% set total_usdt = namespace(val=0.0) %}
-                {% set total_pct = namespace(val=0.0) %}
-                
-                {% for h in history %}
-                    {% set total_usdt.val = total_usdt.val + h.pnl_usdt %}
-                    {% set total_pct.val = total_pct.val + h.pnl_pct %}
-                    {% if h.pnl_usdt >= 0 %}
-                        {% set pos_count.val = pos_count.val + 1 %}
-                    {% else %}
-                        {% set neg_count.val = neg_count.val + 1 %}
-                    {% endif %}
-                {% endfor %}
-
-                <p style="font-size: 12px;">Total Trades: <b>{{ total_trades }}</b> | Pos: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Neg: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
-                <p style="font-size: 12px;">Resultado Acumulado: <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b> (<b style="color: {{ '#4ade80' if total_pct.val >= 0 else '#f87171' }}">{{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%</b>)</p>
-            </div>
-
-            <div class="card">
-                <h3>Registo de Operações</h3>
-                {% for h in history %}
-                <div class="history-item">
-                    <div>
-                        <b>{{ h.pair }} ({{ h.side }})</b><br>
-                        <small style="color: #94a3b8; font-size: 10px;">{{ h.reason }}</small>
-                    </div>
-                    <div style="text-align: right;">
-                        <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold; font-size: 12px;">
-                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }} USDT
-                        </span><br>
-                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }}; font-size: 10px; font-weight: bold;">
-                            {{ "+%.2f"|format(h.pnl_pct) if h.pnl_pct >= 0 else "%.2f"|format(h.pnl_pct) }}%
-                        </small>
-                    </div>
-                </div>
-                {% else %}
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhum registo recente.</p>
-                {% endfor %}
+                <p style="font-size: 12px;">Total Trades: <b>{{ history|length }}</b></p>
             </div>
         </div>
 
@@ -287,13 +244,13 @@ HTML_TEMPLATE = """
                 <h3>Configuração OKX API</h3>
                 <form action="/settings" method="POST">
                     <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
-                    <input type="text" name="api_key" value="{{ api_key or '' }}">
+                    <input type="text" name="api_key" value="{{ api_key }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
-                    <input type="password" name="api_secret" value="{{ api_secret or '' }}">
+                    <input type="text" name="api_secret" value="{{ api_secret }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Password (Passphrase):</label>
-                    <input type="password" name="api_password" value="{{ api_password or '' }}">
+                    <input type="text" name="api_password" value="{{ api_password }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
@@ -328,27 +285,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-def calculate_rsi(closes, period=14):
-    if len(closes) < period + 1:
-        return 50.0
-    gains, losses = 0.0, 0.0
-    for i in range(1, period + 1):
-        diff = closes[i] - closes[i-1]
-        if diff > 0: gains += diff
-        else: losses -= diff
-    avg_gain = gains / period
-    avg_loss = losses / period
-    for i in range(period + 1, len(closes)):
-        diff = closes[i] - closes[i-1]
-        gain = diff if diff > 0 else 0.0
-        loss = -diff if diff < 0 else 0.0
-        avg_gain = (avg_gain * 13 + gain) / 14
-        avg_loss = (avg_loss * 13 + loss) / 14
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return 100.0 - (100.0 / (1.0 + rs))
-
 def fetch_market_and_balance():
     key = str(bot_state.get("api_key") or "").strip()
     secret = str(bot_state.get("api_secret") or "").strip()
@@ -368,10 +304,6 @@ def fetch_market_and_balance():
             total_dict = balance_data.get('total')
             if isinstance(total_dict, dict) and total_dict.get('USDT') is not None:
                 total = float(total_dict['USDT'])
-            else:
-                free_dict = balance_data.get('free')
-                if isinstance(free_dict, dict) and free_dict.get('USDT') is not None:
-                    total = float(free_dict['USDT'])
 
         if total > 0:
             if float(bot_state["initial_balance"]) == 0.0:
@@ -379,32 +311,20 @@ def fetch_market_and_balance():
             bot_state["balance"] = total
     except Exception as e:
         logging.error(f"Erro a ler saldo OKX: {e}")
-        bot_state["log"] = str(f"Erro Saldo: {str(e)[:50]}")
+        bot_state["log"] = f"Erro Saldo: {str(e)[:40]}"
 
     market_list = []
     for symbol in PAIRS:
         try:
             ticker = exchange.fetch_ticker(symbol)
             current_price = float(ticker.get('last') or 0.0)
-            
-            ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=25)
-            closes = [float(c[4]) for c in ohlcv if len(c) > 4]
-            rsi = calculate_rsi(closes)
-
-            if rsi < 35:
-                trend = "LONG"
-            elif rsi > 65:
-                trend = "SHORT"
-            else:
-                trend = "NEUTRO"
-
             clean_name = symbol.split('/')[0]
             market_list.append({
                 "pair": clean_name,
                 "symbol": symbol,
                 "price": current_price,
-                "rsi_5m": rsi,
-                "trend": trend
+                "rsi_5m": 50.0,
+                "trend": "NEUTRO"
             })
         except Exception as ex:
             logging.error(f"Erro no par {symbol}: {ex}")
@@ -435,17 +355,17 @@ def index():
         HTML_TEMPLATE,
         configured=configured,
         running=bot_state["running"],
-        initial_balance=bot_state["initial_balance"],
-        balance=bot_state["balance"],
-        realized_pnl=bot_state["realized_pnl"],
-        active_position=bot_state["active_position"],
-        market_data=bot_state["market_data"],
-        history=bot_state["history"],
+        initial_balance=float(bot_state["initial_balance"] or 0.0),
+        balance=float(bot_state["balance"] or 0.0),
+        realized_pnl=float(bot_state["realized_pnl"] or 0.0),
+        active_position=bot_state.get("active_position"),
+        market_data=bot_state.get("market_data", []),
+        history=bot_state.get("history", []),
         api_key=str(bot_state.get("api_key") or ""),
-        api_secret="" if not bot_state.get("api_secret") else "********",
-        api_password="" if not bot_state.get("api_password") else "********",
-        is_demo=bot_state["is_demo"],
-        leverage=bot_state["leverage"],
+        api_secret=str(bot_state.get("api_secret") or ""),
+        api_password=str(bot_state.get("api_password") or ""),
+        is_demo=bool(bot_state.get("is_demo", True)),
+        leverage=int(bot_state.get("leverage") or 21),
         last_update=str(bot_state.get("last_update") or "Aguardando..."),
         log=str(bot_state.get("log") or "Sistema pronto.")
     )
@@ -455,27 +375,18 @@ def settings():
     global global_exchange
     global_exchange = None 
     
-    key = str(request.form.get("api_key") or "").strip()
-    secret = str(request.form.get("api_secret") or "").strip()
-    password = str(request.form.get("api_password") or "").strip()
-    is_demo_val = True if request.form.get("is_demo") else False
+    bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
+    bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
+    bot_state["api_password"] = str(request.form.get("api_password") or "").strip()
+    bot_state["is_demo"] = True if request.form.get("is_demo") else False
     
-    if key and key != "********":
-        bot_state["api_key"] = key
-    if secret and not secret.startswith("****") and secret != "********":
-        bot_state["api_secret"] = secret
-    if password and password != "********" and len(password) > 0:
-        bot_state["api_password"] = password
-        
-    bot_state["is_demo"] = is_demo_val
-        
     try:
         bot_state["leverage"] = int(request.form.get("leverage") or 21)
     except ValueError:
-        pass
+        bot_state["leverage"] = 21
     
     fetch_market_and_balance()
-    bot_state["log"] = str(f"Definições OKX guardadas. Modo: {'DEMO' if bot_state['is_demo'] else 'REAL'}.")
+    bot_state["log"] = "Definições guardadas com sucesso."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -485,12 +396,12 @@ def toggle():
     password = str(bot_state.get("api_password") or "").strip()
 
     if not key or not secret or not password:
-        bot_state["log"] = str("Erro: Insira as credenciais OKX em Ajustes!")
+        bot_state["log"] = "Erro: Credenciais em falta nos Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
     mode_str = "DEMO" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = str(f"Robô ativado na OKX ({mode_str})." if bot_state["running"] else "Robô parado.")
+    bot_state["log"] = f"Robô ativado ({mode_str})." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -503,41 +414,8 @@ def background_loop():
 
             if key and secret and password:
                 fetch_market_and_balance()
-                
-                exchange = get_exchange()
-                if exchange and bot_state["running"]:
-                    pos = bot_state["active_position"]
-                    if not pos:
-                        for item in bot_state["market_data"]:
-                            if item["trend"] in ["LONG", "SHORT"]:
-                                symbol = item["symbol"]
-                                side = 'buy' if item["trend"] == 'LONG' else 'sell'
-                                try:
-                                    notional = float(bot_state["balance"]) * float(bot_state["leverage"]) * 0.95
-                                    raw_amount = notional / float(item["price"])
-                                    amount = float(exchange.amount_to_precision(symbol, raw_amount))
-                                    
-                                    order = exchange.create_market_order(symbol, side, amount)
-                                    execution_price = float(order.get('average') or item["price"])
-                                    
-                                    bot_state["active_position"] = {
-                                        "pair": item["pair"],
-                                        "symbol": symbol,
-                                        "side": item["trend"],
-                                        "entry": execution_price,
-                                        "amount": amount,
-                                        "highest_price": execution_price,
-                                        "pnl": 0.0,
-                                        "trailing_active": False
-                                    }
-                                    bot_state["log"] = str(f"Ordem aberta (OKX): {item['pair']} ({item['trend']})")
-                                    break
-                                except Exception as ord_err:
-                                    err_str = str(ord_err)
-                                    bot_state["log"] = str(f"REJEITADO OKX: {err_str[:70]}")
-                                    logging.error(f"Erro ao abrir ordem OKX: {err_str}")
         except Exception as e:
-            logging.error(f"Erro no loop principal OKX: {e}")
+            logging.error(f"Erro no loop principal: {e}")
             global_exchange = None
         
         time.sleep(2)
