@@ -32,36 +32,30 @@ def get_exchange():
     secret = str(bot_state["api_secret"] or "").strip()
     password = str(bot_state["api_password"] or "").strip()
 
-    if key and secret and password:
-        if global_exchange is None:
-            try:
-                config = {
-                    'apiKey': key,
-                    'secret': secret,
-                    'password': password,
-                    'enableRateLimit': True,
-                    'options': {
-                        'defaultType': 'linear',
-                        'adjustForTimeDifference': True
-                    }
-                }
-                
-                if bot_state["is_demo"]:
-                    config['headers'] = {'x-simulated-trading': '1'}
-                
-                exchange = ccxt.okx(config)
-                
-                if bot_state["is_demo"]:
-                    exchange.set_sandbox_mode(True)
-                
-                exchange.load_markets()
-                global_exchange = exchange
-                bot_state["log"] = "Conexão OKX estabelecida com sucesso."
-            except Exception as err:
-                # Tratamento estrito e seguro para evitar qualquer NoneType
-                msg = str(err) if err is not None else "Erro desconhecido"
-                bot_state["log"] = str("Erro OKX: " + msg[:50])
-                global_exchange = None
+    if not key or not secret or not password:
+        return None
+
+    if global_exchange is None:
+        try:
+            config = {
+                'apiKey': key,
+                'secret': secret,
+                'password': password,
+                'enableRateLimit': True,
+                'options': {'defaultType': 'linear'}
+            }
+            if bot_state["is_demo"]:
+                config['headers'] = {'x-simulated-trading': '1'}
+            
+            ex = ccxt.okx(config)
+            if bot_state["is_demo"]:
+                ex.set_sandbox_mode(True)
+            ex.load_markets()
+            global_exchange = ex
+            bot_state["log"] = "Conexão OKX estabelecida com sucesso."
+        except Exception:
+            bot_state["log"] = "Erro de autenticação na OKX."
+            global_exchange = None
     return global_exchange
 
 HTML_TEMPLATE = """
@@ -159,7 +153,7 @@ HTML_TEMPLATE = """
             <div class="card">
                 <h3>Posição Ativa</h3>
                 {% if active_position %}
-                    <p>Ativo: <b>{{ active_position.pair }}</b> ({{ active_position.side }})</p>
+                    <p>Ativo: <b>{{ active_position.pair }}</b></p>
                 {% else %}
                     <p style="text-align: center; color: #94a3b8; font-size: 12px;">Em Stand-by (Aguardando Sinal).</p>
                 {% endif %}
@@ -208,13 +202,7 @@ HTML_TEMPLATE = """
         <div id="historico" class="tab-content">
             <div class="card">
                 <h3>Registo de Operações</h3>
-                {% for h in history %}
-                <div class="history-item">
-                    <div><b>{{ h.pair }}</b></div>
-                </div>
-                {% else %}
                 <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhum registo recente.</p>
-                {% endfor %}
             </div>
         </div>
 
@@ -266,13 +254,6 @@ HTML_TEMPLATE = """
 """
 
 def fetch_data():
-    key = str(bot_state["api_key"] or "").strip()
-    secret = str(bot_state["api_secret"] or "").strip()
-    password = str(bot_state["api_password"] or "").strip()
-
-    if not key or not secret or not password:
-        return
-
     ex = get_exchange()
     if not ex:
         return
@@ -290,9 +271,8 @@ def fetch_data():
             m_list.append({"pair": sym.split('/')[0], "price": ticker.get('last', 0.0)})
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
-    except Exception as err:
-        m_err = str(err) if err is not None else "Erro de loop"
-        bot_state["log"] = str("Erro sync: " + m_err[:40])
+    except Exception:
+        bot_state["log"] = "Erro de sincronização de dados."
 
 @app.route('/api/state')
 def api_state():
@@ -326,7 +306,7 @@ def index():
 @app.route('/settings', methods=['POST'])
 def settings():
     global global_exchange
-    global_exchange = None  # Reseta o objeto para aceitar novas credenciais limpas
+    global_exchange = None
     
     bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
     bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
@@ -338,7 +318,7 @@ def settings():
     except:
         bot_state["leverage"] = 21
     
-    bot_state["log"] = "Definições guardadas. A testar ligação..."
+    bot_state["log"] = "Definições guardadas. A ligar..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
