@@ -56,8 +56,7 @@ def get_exchange():
             global_exchange = exchange
             bot_state["log"] = "Conexão OKX Demo estabelecida com sucesso."
         except Exception:
-            # Mensagem 100% estática: ZERO risco de NoneType ou erro de operador +
-            bot_state["log"] = "Erro de autenticação ou chaves inválidas na OKX."
+            bot_state["log"] = "Erro de autenticação na OKX."
             global_exchange = None
     return global_exchange
 
@@ -275,7 +274,7 @@ def fetch_data():
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
     except Exception:
-        bot_state["log"] = "Erro de sincronização de dados de mercado."
+        bot_state["log"] = "Erro de sincronização de dados."
 
 @app.route('/api/state')
 def api_state():
