@@ -42,7 +42,7 @@ def get_exchange():
                 global_exchange.load_markets()
                 bot_state["log"] = "Conexão OKX estabelecida com sucesso."
             except Exception as e:
-                bot_state["log"] = "Erro API: " + str(e)[:40]
+                bot_state["log"] = f"Erro API: {e}"
                 global_exchange = None
     return global_exchange
 
@@ -64,7 +64,7 @@ HTML_TEMPLATE = """
         .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 6px 0; height: 50px; }
         .nav-btn { background: none; border: none; color: #94a3b8; font-size: 11px; font-weight: bold; cursor: pointer; flex: 1; text-align: center; }
         .nav-btn.active { color: #4ade80; }
-        .log-box { background: #0f172a; border-left: 3px solid #f87171; padding: 8px; font-size: 11px; color: #fca5a5; max-height: 80px; overflow-y: auto; }
+        .log-box { background: #0f172a; border-left: 3px solid #f87171; padding: 8px; font-size: 11px; color: #fca5a5; max-height: 80px; overflow-y: auto; word-break: break-all; }
         .btn-circle { width: 42px; height: 42px; border-radius: 50%; border: none; color: white; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; background: #16a34a; }
         .btn-circle.stop { background: #dc2626; }
     </style>
@@ -159,11 +159,11 @@ def fetch_data():
             m_list.append({"pair": sym.split('/')[0], "price": ticker.get('last', 0.0)})
         bot_state["market_data"] = m_list
     except Exception as e:
-        bot_state["log"] = "Erro loop: " + str(e)[:40]
+        bot_state["log"] = f"Erro loop: {e}"
 
 @app.route('/api/state')
 def api_state():
-    return jsonify({"log": bot_state["log"]})
+    return jsonify({"log": str(bot_state["log"])})
 
 @app.route('/')
 def index():
@@ -179,7 +179,7 @@ def index():
         api_password=bot_state["api_password"],
         leverage=bot_state["leverage"],
         is_demo=bot_state["is_demo"],
-        log=bot_state["log"]
+        log=str(bot_state["log"])
     )
 
 @app.route('/settings', methods=['POST'])
