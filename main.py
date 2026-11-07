@@ -103,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualiza o painel e logs a cada 4 segundos em tempo real
+            // Atualiza o painel e logs a cada 3 segundos em tempo real
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -113,7 +113,7 @@ HTML_TEMPLATE = """
                             if(logBox) logBox.innerText = data.log;
                         }
                     }).catch(err => console.log(err));
-            }, 4000);
+            }, 3000);
         }
     </script>
 </head>
@@ -439,7 +439,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e à escuta de sinais de alta frequência." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e a executar ordens reais." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -450,7 +450,7 @@ def background_loop():
                 
                 exchange = get_exchange()
                 if not exchange:
-                    time.sleep(3)
+                    time.sleep(2)
                     continue
 
                 pos = bot_state["active_position"]
@@ -530,10 +530,14 @@ def background_loop():
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
                                 try:
+                                    # Configurar alavancagem antes de enviar ordem para garantir aceitação da corretora
+                                    try:
+                                        exchange.set_leverage(bot_state["leverage"], symbol)
+                                    except Exception:
+                                        pass
+
                                     market_info = exchange.market(symbol)
                                     min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
-                                    
-                                    # Forçar a utilização do lote mínimo exato para garantir que a corretora aceite
                                     amount = min_amount
                                     
                                     order = exchange.create_market_order(symbol, side, amount)
@@ -559,7 +563,7 @@ def background_loop():
         except Exception as e:
             logging.error(f"Erro crítico no background_loop: {e}")
         
-        time.sleep(3)
+        time.sleep(2)
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
