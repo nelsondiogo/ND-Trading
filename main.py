@@ -10,7 +10,6 @@ bot_state = {
     "running": False,
     "api_key": "",
     "api_secret": "",
-    "api_password": "",
     "is_demo": True,
     "leverage": 21,
     "initial_balance": 0.0,
@@ -20,7 +19,7 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto. Insira as credenciais em Ajustes."
+    "log": "Sistema pronto. Insira as credenciais Bybit em Ajustes."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
@@ -30,17 +29,15 @@ def get_exchange():
     global global_exchange
     key = str(bot_state["api_key"] or "").strip()
     secret = str(bot_state["api_secret"] or "").strip()
-    password = str(bot_state["api_password"] or "").strip()
 
-    if not key or not secret or not password:
+    if not key or not secret:
         return None
 
     if global_exchange is None:
         try:
-            exchange = ccxt.okx({
+            exchange = ccxt.bybit({
                 'apiKey': key,
                 'secret': secret,
-                'password': password,
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'linear',
@@ -50,13 +47,12 @@ def get_exchange():
             
             if bot_state["is_demo"]:
                 exchange.set_sandbox_mode(True)
-                exchange.headers = {'x-simulated-trading': '1'}
                 
             exchange.load_markets()
             global_exchange = exchange
-            bot_state["log"] = "Conexão OKX Demo estabelecida com sucesso."
+            bot_state["log"] = "Conexão Bybit Testnet estabelecida com sucesso."
         except Exception:
-            bot_state["log"] = "Erro de autenticação na OKX."
+            bot_state["log"] = "Erro de autenticação na Bybit."
             global_exchange = None
     return global_exchange
 
@@ -66,17 +62,17 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OKX SCALPING</title>
+    <title>BYBIT SCALPING</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
-        h1 { color: #4ade80; text-align: center; font-size: 18px; margin: 8px 0 2px 0; font-weight: 700; }
+        h1 { color: #f59e0b; text-align: center; font-size: 18px; margin: 8px 0 2px 0; font-weight: 700; }
         .clock { text-align: center; font-size: 11px; color: #38bdf8; margin-bottom: 10px; font-weight: bold; }
         
         .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
         .balance-box { background: #1e293b; border: 1px solid #334155; padding: 10px; border-radius: 8px; text-align: center; }
         .balance-box span { display: block; font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
-        .balance-box strong { font-size: 14px; color: #4ade80; }
+        .balance-box strong { font-size: 14px; color: #f59e0b; }
         
         .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
         .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; }
@@ -89,7 +85,7 @@ HTML_TEMPLATE = """
         
         .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 6px 0; z-index: 100; height: 50px; }
         .nav-btn { background: none; border: none; color: #94a3b8; font-size: 10px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
-        .nav-btn.active { color: #4ade80; }
+        .nav-btn.active { color: #f59e0b; }
         
         .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 10px; }
         .btn-circle { width: 44px; height: 44px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; color: white; }
@@ -136,7 +132,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <h1>OKX SCALPING</h1>
+        <h1>BYBIT SCALPING</h1>
         <div class="clock">Sincronizado: {{ last_update }}</div>
 
         <!-- ABA DASHBOARD -->
@@ -147,7 +143,7 @@ HTML_TEMPLATE = """
                     <strong>+{{ "%.2f"|format(initial_balance) }}</strong>
                 </div>
                 <div class="balance-box">
-                    <span>Disponível ({{ 'DEMO' if is_demo else 'REAL' }})</span>
+                    <span>Disponível ({{ 'TESTNET' if is_demo else 'REAL' }})</span>
                     <strong>+{{ "%.2f"|format(balance) }}</strong>
                 </div>
             </div>
@@ -211,7 +207,7 @@ HTML_TEMPLATE = """
         <!-- ABA AJUSTES -->
         <div id="ajustes" class="tab-content">
             <div class="card">
-                <h3>Configuração OKX API</h3>
+                <h3>Configuração Bybit API</h3>
                 <form action="/settings" method="POST">
                     <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
                     <input type="text" name="api_key" value="{{ api_key }}">
@@ -219,18 +215,15 @@ HTML_TEMPLATE = """
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
                     <input type="text" name="api_secret" value="{{ api_secret }}">
                     
-                    <label style="font-size: 11px; color: #94a3b8;">API Password (Passphrase):</label>
-                    <input type="text" name="api_password" value="{{ api_password }}">
-                    
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
                     
                     <label class="checkbox-container">
                         <input type="checkbox" name="is_demo" {% if is_demo %}checked{% endif %}>
-                        Usar Modo Demo / Sandbox (Testes)
+                        Usar Testnet (Modo Demonstração)
                     </label>
                     
-                    <button type="submit" style="width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; background: #16a34a; color: white; margin-top: 6px;">Guardar Definições</button>
+                    <button type="submit" style="width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; background: #f59e0b; color: #0f172a; margin-top: 6px;">Guardar Definições</button>
                 </form>
             </div>
         </div>
@@ -274,7 +267,7 @@ def fetch_data():
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
     except Exception:
-        bot_state["log"] = "Erro de sincronização de dados."
+        bot_state["log"] = "Erro de sincronização com a Bybit."
 
 @app.route('/api/state')
 def api_state():
@@ -298,7 +291,6 @@ def index():
         history=bot_state["history"],
         api_key=str(bot_state["api_key"] or ""),
         api_secret=str(bot_state["api_secret"] or ""),
-        api_password=str(bot_state["api_password"] or ""),
         leverage=int(bot_state["leverage"] or 21),
         is_demo=bool(bot_state["is_demo"]),
         last_update=str(bot_state["last_update"] or "Aguardando..."),
@@ -312,7 +304,6 @@ def settings():
     
     bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
     bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
-    bot_state["api_password"] = str(request.form.get("api_password") or "").strip()
     bot_state["is_demo"] = True if request.form.get("is_demo") else False
     
     try:
@@ -320,21 +311,20 @@ def settings():
     except:
         bot_state["leverage"] = 21
     
-    bot_state["log"] = "Definições guardadas. A ligar..."
+    bot_state["log"] = "Definições guardadas. A ligar à Bybit..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
     key = str(bot_state["api_key"] or "").strip()
     secret = str(bot_state["api_secret"] or "").strip()
-    password = str(bot_state["api_password"] or "").strip()
 
-    if not key or not secret or not password:
-        bot_state["log"] = "Erro: Insira as credenciais em Ajustes!"
+    if not key or not secret:
+        bot_state["log"] = "Erro: Insira as credenciais Bybit em Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    mode_str = "DEMO" if bot_state["is_demo"] else "REAL"
+    mode_str = "TESTNET" if bot_state["is_demo"] else "REAL"
     bot_state["log"] = f"Robô ativado ({mode_str})." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
