@@ -27,9 +27,9 @@ bot_state = {
 
 PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
 
-TAKE_PROFIT_PCT = 0.045       # 4.5%
-STOP_LOSS_PCT = 0.012         # 1.2%
-TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
+TAKE_PROFIT_PCT = 0.045
+STOP_LOSS_PCT = 0.012
+TRAILING_ACTIVATE_PCT = 0.005
 
 global_exchange = None
 
@@ -56,7 +56,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING REALTIME</title>
+    <title>ND-SCALPING FORENSIC</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -288,7 +288,6 @@ def fetch_market_and_balance():
         bot_state["log"] = "Erro: Falha na instância CCXT."
         return
 
-    # Leitura do Saldo
     try:
         bal = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
@@ -308,7 +307,6 @@ def fetch_market_and_balance():
     except Exception as e:
         logging.error(f"Erro saldo: {e}")
 
-    # Leitura do Mercado
     market_list = []
     for symbol in PAIRS:
         try:
@@ -344,6 +342,9 @@ def fetch_market_and_balance():
 
 @app.route('/api/state')
 def api_state():
+    # Atualiza em background de forma assíncrona a cada ciclo de polling para garantir dados sempre frescos
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        threading.Thread(target=fetch_market_and_balance, daemon=True).start()
     return jsonify({
         "log": bot_state["log"],
         "last_update": bot_state["last_update"]
@@ -351,6 +352,10 @@ def api_state():
 
 @app.route('/')
 def index():
+    # Sincroniza imediatamente ao abrir a página principal
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        fetch_market_and_balance()
+
     configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
@@ -387,6 +392,7 @@ def settings():
     except ValueError:
         pass
     
+    fetch_market_and_balance()
     bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
@@ -439,7 +445,7 @@ def background_loop():
                                     bot_state["log"] = f"Erro ao abrir ordem: {str(ord_err)[:70]}"
         except Exception as e:
             logging.error(f"Erro no loop principal: {e}")
-            global_exchange = None  # Reseta a conexão para reconectar no próximo ciclo
+            global_exchange = None
         
         time.sleep(2)
 
