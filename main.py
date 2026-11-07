@@ -23,7 +23,7 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto. Insira as credenciais OKX."
+    "log": "Sistema pronto. Insira as credenciais OKX em Ajustes."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
@@ -36,14 +36,17 @@ global_exchange = None
 
 def get_exchange():
     global global_exchange
-    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
+    key = str(bot_state.get("api_key") or "").strip()
+    secret = str(bot_state.get("api_secret") or "").strip()
+    password = str(bot_state.get("api_password") or "").strip()
+
+    if key and secret and password:
         if global_exchange is None:
             try:
-                # Configuração rigorosa para OKX (suporte nativo a Demo via header x-simulated-trading)
                 config = {
-                    'apiKey': bot_state["api_key"],
-                    'secret': bot_state["api_secret"],
-                    'password': bot_state["api_password"],
+                    'apiKey': key,
+                    'secret': secret,
+                    'password': password,
                     'enableRateLimit': True,
                     'options': {
                         'defaultType': 'linear',
@@ -60,10 +63,11 @@ def get_exchange():
                     global_exchange.set_sandbox_mode(True)
                 
                 global_exchange.load_markets()
+                bot_state["log"] = "Conexão OKX estabelecida com sucesso."
             except Exception as e:
                 err_msg = str(e)
                 logging.error(f"Erro crítico CCXT OKX: {err_msg}")
-                bot_state["log"] = f"Erro API: {err_msg[:70]}"
+                bot_state["log"] = f"Erro API: {err_msg[:60]}"
                 global_exchange = None
     return global_exchange
 
@@ -73,7 +77,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OKX SCALPING DIAGNÓSTICO</title>
+    <title>OKX SCALPING</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -346,8 +350,13 @@ def calculate_rsi(closes, period=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 def fetch_market_and_balance():
-    if not bot_state["api_key"] or not bot_state["api_secret"] or not bot_state["api_password"]:
+    key = str(bot_state.get("api_key") or "").strip()
+    secret = str(bot_state.get("api_secret") or "").strip()
+    password = str(bot_state.get("api_password") or "").strip()
+
+    if not key or not secret or not password:
         return
+
     exchange = get_exchange()
     if not exchange:
         return
@@ -355,13 +364,17 @@ def fetch_market_and_balance():
     try:
         balance_data = exchange.fetch_balance()
         total = 0.0
-        if 'total' in balance_data and 'USDT' in balance_data['total'] and balance_data['total']['USDT'] is not None:
-            total = float(balance_data['total']['USDT'])
-        elif 'free' in balance_data and 'USDT' in balance_data['free'] and balance_data['free']['USDT'] is not None:
-            total = float(balance_data['free']['USDT'])
+        if isinstance(balance_data, dict):
+            total_dict = balance_data.get('total')
+            if isinstance(total_dict, dict) and total_dict.get('USDT') is not None:
+                total = float(total_dict['USDT'])
+            else:
+                free_dict = balance_data.get('free')
+                if isinstance(free_dict, dict) and free_dict.get('USDT') is not None:
+                    total = float(free_dict['USDT'])
 
         if total > 0:
-            if bot_state["initial_balance"] == 0.0:
+            if float(bot_state["initial_balance"]) == 0.0:
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
     except Exception as e:
@@ -372,10 +385,10 @@ def fetch_market_and_balance():
     for symbol in PAIRS:
         try:
             ticker = exchange.fetch_ticker(symbol)
-            current_price = ticker.get('last', 0.0)
+            current_price = float(ticker.get('last') or 0.0)
             
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe='1m', limit=25)
-            closes = [c[4] for c in ohlcv]
+            closes = [float(c[4]) for c in ohlcv if len(c) > 4]
             rsi = calculate_rsi(closes)
 
             if rsi < 35:
@@ -403,19 +416,27 @@ def fetch_market_and_balance():
 
 @app.route('/api/state')
 def api_state():
-    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
+    key = str(bot_state.get("api_key") or "").strip()
+    secret = str(bot_state.get("api_secret") or "").strip()
+    password = str(bot_state.get("api_password") or "").strip()
+
+    if key and secret and password:
         threading.Thread(target=fetch_market_and_balance, daemon=True).start()
     return jsonify({
-        "log": bot_state["log"],
-        "last_update": bot_state["last_update"]
+        "log": str(bot_state.get("log") or ""),
+        "last_update": str(bot_state.get("last_update") or "")
     })
 
 @app.route('/')
 def index():
-    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
+    key = str(bot_state.get("api_key") or "").strip()
+    secret = str(bot_state.get("api_secret") or "").strip()
+    password = str(bot_state.get("api_password") or "").strip()
+
+    if key and secret and password:
         fetch_market_and_balance()
 
-    configured = bool(bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"])
+    configured = bool(key and secret and password)
     return render_template_string(
         HTML_TEMPLATE,
         configured=configured,
@@ -465,8 +486,12 @@ def settings():
 
 @app.route('/toggle', methods=['POST'])
 def toggle():
-    if not bot_state["api_key"] or not bot_state["api_secret"] or not bot_state["api_password"]:
-        bot_state["log"] = "Erro: Insira as credenciais OKX!"
+    key = str(bot_state.get("api_key") or "").strip()
+    secret = str(bot_state.get("api_secret") or "").strip()
+    password = str(bot_state.get("api_password") or "").strip()
+
+    if not key or not secret or not password:
+        bot_state["log"] = "Erro: Insira as credenciais OKX em Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
@@ -478,7 +503,11 @@ def background_loop():
     global global_exchange
     while True:
         try:
-            if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
+            key = str(bot_state.get("api_key") or "").strip()
+            secret = str(bot_state.get("api_secret") or "").strip()
+            password = str(bot_state.get("api_password") or "").strip()
+
+            if key and secret and password:
                 fetch_market_and_balance()
                 
                 exchange = get_exchange()
@@ -490,12 +519,12 @@ def background_loop():
                                 symbol = item["symbol"]
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 try:
-                                    notional = bot_state["balance"] * bot_state["leverage"] * 0.95
-                                    raw_amount = notional / item["price"]
+                                    notional = float(bot_state["balance"]) * float(bot_state["leverage"]) * 0.95
+                                    raw_amount = notional / float(item["price"])
                                     amount = float(exchange.amount_to_precision(symbol, raw_amount))
                                     
                                     order = exchange.create_market_order(symbol, side, amount)
-                                    execution_price = order.get('average', item["price"])
+                                    execution_price = float(order.get('average') or item["price"])
                                     
                                     bot_state["active_position"] = {
                                         "pair": item["pair"],
