@@ -14,7 +14,7 @@ bot_state = {
     "api_key": "",
     "api_secret": "",
     "api_password": "",
-    "is_demo": True, # Ativado por defeito para a Demo Trading da OKX
+    "is_demo": True,
     "leverage": 21,
     "initial_balance": 0.0,
     "balance": 0.0,
@@ -23,10 +23,9 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto (OKX Demo). Insira as credenciais em Ajustes."
+    "log": "Sistema pronto (OKX Demo). Insira as credenciais."
 }
 
-# Pares de futuros lineares validados na OKX
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045
@@ -37,7 +36,7 @@ global_exchange = None
 
 def get_exchange():
     global global_exchange
-    if bot_state["api_key"] and bot_state["api_secret"]:
+    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
         if global_exchange is None:
             try:
                 global_exchange = ccxt.okx({
@@ -50,11 +49,14 @@ def get_exchange():
                         'adjustForTimeDifference': True
                     }
                 })
-                # Ativa o modo Sandbox/Demo da OKX rigorosamente
-                global_exchange.set_sandbox_mode(bot_state["is_demo"])
+                if bot_state["is_demo"]:
+                    global_exchange.set_sandbox_mode(True)
+                
                 global_exchange.load_markets()
             except Exception as e:
-                logging.error(f"Erro ao iniciar CCXT OKX: {e}")
+                err_msg = str(e)
+                logging.error(f"Erro ao iniciar CCXT OKX: {err_msg}")
+                bot_state["log"] = f"Erro CCXT: {err_msg[:60]}"
                 global_exchange = None
     return global_exchange
 
@@ -64,7 +66,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ND-SCALPING OKX DEMO</title>
+    <title>OKX SCALPING DEMO</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
         .container { max-width: 480px; margin: auto; }
@@ -337,11 +339,10 @@ def calculate_rsi(closes, period=14):
     return 100.0 - (100.0 / (1.0 + rs))
 
 def fetch_market_and_balance():
-    if not bot_state["api_key"] or not bot_state["api_secret"]:
+    if not bot_state["api_key"] or not bot_state["api_secret"] or not bot_state["api_password"]:
         return
     exchange = get_exchange()
     if not exchange:
-        bot_state["log"] = "Erro: Falha na instância CCXT OKX."
         return
 
     try:
@@ -394,7 +395,7 @@ def fetch_market_and_balance():
 
 @app.route('/api/state')
 def api_state():
-    if bot_state["api_key"] and bot_state["api_secret"]:
+    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
         threading.Thread(target=fetch_market_and_balance, daemon=True).start()
     return jsonify({
         "log": bot_state["log"],
@@ -403,10 +404,10 @@ def api_state():
 
 @app.route('/')
 def index():
-    if bot_state["api_key"] and bot_state["api_secret"]:
+    if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
         fetch_market_and_balance()
 
-    configured = bool(bot_state["api_key"] and bot_state["api_secret"])
+    configured = bool(bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"])
     return render_template_string(
         HTML_TEMPLATE,
         configured=configured,
@@ -469,7 +470,7 @@ def background_loop():
     global global_exchange
     while True:
         try:
-            if bot_state["api_key"] and bot_state["api_secret"]:
+            if bot_state["api_key"] and bot_state["api_secret"] and bot_state["api_password"]:
                 fetch_market_and_balance()
                 
                 exchange = get_exchange()
