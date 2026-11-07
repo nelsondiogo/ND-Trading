@@ -37,24 +37,25 @@ def get_exchange():
 
     if global_exchange is None:
         try:
-            config = {
+            exchange = ccxt.okx({
                 'apiKey': key,
                 'secret': secret,
                 'password': password,
                 'enableRateLimit': True,
-                'options': {'defaultType': 'linear'}
-            }
-            if bot_state["is_demo"]:
-                config['headers'] = {'x-simulated-trading': '1'}
+                'options': {
+                    'defaultType': 'linear',
+                    'adjustForTimeDifference': True
+                }
+            })
             
-            ex = ccxt.okx(config)
             if bot_state["is_demo"]:
-                ex.set_sandbox_mode(True)
-            ex.load_markets()
-            global_exchange = ex
+                exchange.set_sandbox_mode(True)
+                
+            exchange.load_markets()
+            global_exchange = exchange
             bot_state["log"] = "Conexão OKX estabelecida com sucesso."
         except Exception:
-            bot_state["log"] = "Erro de autenticação na OKX."
+            bot_state["log"] = "Erro de autenticação na OKX. Verifique as credenciais."
             global_exchange = None
     return global_exchange
 
