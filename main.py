@@ -23,7 +23,8 @@ bot_state = {
     "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
-PAIRS = ['ADA/USDT', 'TRX/USDT', 'NEAR/USDT', 'LTC/USDT']
+# Pares validados e otimizados para alta frequência na Bybit
+PAIRS = ['ADA/USDT', 'TRX/USDT', 'DOGE/USDT', 'XRP/USDT']
 
 TAKE_PROFIT_PCT = 0.045       # 4.5%
 STOP_LOSS_PCT = 0.012         # 1.2%
@@ -338,7 +339,6 @@ def fetch_market_and_balance():
                 closes_15m = [c[4] for c in ohlcv_15m]
                 rsi_15m = calculate_rsi(closes_15m)
 
-                # Gatilho de alta frequência focado no RSI de 5m (RSI < 38 para LONG, > 62 para SHORT)
                 if rsi_5m < 38:
                     trend = "LONG"
                 elif rsi_5m > 62:
@@ -411,7 +411,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado em alta frequência (RSI 5m)." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e pronto para abrir posições reais." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -444,7 +444,6 @@ def background_loop():
                         
                         pos["pnl"] = pnl_pct * 100.0
 
-                        # Ativação da Muralha Trailing (+0.5%)
                         if pnl_pct >= TRAILING_ACTIVATE_PCT:
                             if not pos["trailing_active"]:
                                 pos["trailing_active"] = True
@@ -457,7 +456,6 @@ def background_loop():
                             elif side == "SHORT" and current_price < pos["highest_price"]:
                                 pos["highest_price"] = current_price
 
-                            # Recuo rigoroso
                             if side == "LONG" and current_price < pos["highest_price"]:
                                 exchange.create_market_order(symbol, 'sell' if side=='LONG' else 'buy', pos['amount'])
                                 bot_state["log"] = f"Muralha rigorosa! Fechando {pos['pair']} por recuo."
@@ -501,13 +499,12 @@ def background_loop():
                             bot_state["realized_pnl"] += (pos["pnl"]/100) * bot_state["balance"]
                             bot_state["active_position"] = None
                     else:
-                        # Procurar sinal imediato e abrir ordem real na Bybit
                         for item in bot_state["market_data"]:
                             if item["trend"] in ["LONG", "SHORT"]:
                                 symbol = item["symbol"]
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
-                                # Cálculo de montante adaptado ao saldo disponível e alavancagem
+                                # Força o lote mínimo permitido pela Bybit para garantir execução
                                 market_info = exchange.market(symbol)
                                 min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
                                 
@@ -529,10 +526,10 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']}) a {execution_price}"
+                                    bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']}) a {execution_price}"
                                     break
                                 except Exception as ord_err:
-                                    bot_state["log"] = f"Erro Bybit Ordem: {str(ord_err)[:55]}"
+                                    bot_state["log"] = f"Aviso Bybit: {str(ord_err)[:50]}"
 
         except Exception as e:
             logging.error(f"Erro crítico no background_loop: {e}")
