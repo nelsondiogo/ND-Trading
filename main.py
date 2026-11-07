@@ -67,7 +67,7 @@ def get_exchange():
             except Exception as e:
                 err_msg = str(e)
                 logging.error(f"Erro crítico CCXT OKX: {err_msg}")
-                bot_state["log"] = f"Erro API: {err_msg[:60]}"
+                bot_state["log"] = str(f"Erro API: {err_msg[:65]}")
                 global_exchange = None
     return global_exchange
 
@@ -379,7 +379,7 @@ def fetch_market_and_balance():
             bot_state["balance"] = total
     except Exception as e:
         logging.error(f"Erro a ler saldo OKX: {e}")
-        bot_state["log"] = f"Erro Saldo: {str(e)[:50]}"
+        bot_state["log"] = str(f"Erro Saldo: {str(e)[:50]}")
 
     market_list = []
     for symbol in PAIRS:
@@ -412,19 +412,13 @@ def fetch_market_and_balance():
     if market_list:
         bot_state["market_data"] = market_list
     
-    bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
+    bot_state["last_update"] = str(datetime.datetime.now().strftime("%H:%M:%S"))
 
 @app.route('/api/state')
 def api_state():
-    key = str(bot_state.get("api_key") or "").strip()
-    secret = str(bot_state.get("api_secret") or "").strip()
-    password = str(bot_state.get("api_password") or "").strip()
-
-    if key and secret and password:
-        threading.Thread(target=fetch_market_and_balance, daemon=True).start()
     return jsonify({
-        "log": str(bot_state.get("log") or ""),
-        "last_update": str(bot_state.get("last_update") or "")
+        "log": str(bot_state.get("log") or "Aguardando..."),
+        "last_update": str(bot_state.get("last_update") or "Aguardando...")
     })
 
 @app.route('/')
@@ -452,8 +446,8 @@ def index():
         api_password="" if not bot_state.get("api_password") else "********",
         is_demo=bot_state["is_demo"],
         leverage=bot_state["leverage"],
-        last_update=bot_state["last_update"],
-        log=str(bot_state.get("log") or "")
+        last_update=str(bot_state.get("last_update") or "Aguardando..."),
+        log=str(bot_state.get("log") or "Sistema pronto.")
     )
 
 @app.route('/settings', methods=['POST'])
@@ -470,7 +464,7 @@ def settings():
         bot_state["api_key"] = key
     if secret and not secret.startswith("****") and secret != "********":
         bot_state["api_secret"] = secret
-    if password and password != "********":
+    if password and password != "********" and len(password) > 0:
         bot_state["api_password"] = password
         
     bot_state["is_demo"] = is_demo_val
@@ -481,7 +475,7 @@ def settings():
         pass
     
     fetch_market_and_balance()
-    bot_state["log"] = f"Definições OKX guardadas. Modo: {'DEMO' if bot_state['is_demo'] else 'REAL'}."
+    bot_state["log"] = str(f"Definições OKX guardadas. Modo: {'DEMO' if bot_state['is_demo'] else 'REAL'}.")
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -491,12 +485,12 @@ def toggle():
     password = str(bot_state.get("api_password") or "").strip()
 
     if not key or not secret or not password:
-        bot_state["log"] = "Erro: Insira as credenciais OKX em Ajustes!"
+        bot_state["log"] = str("Erro: Insira as credenciais OKX em Ajustes!")
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
     mode_str = "DEMO" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = f"Robô ativado na OKX ({mode_str})." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = str(f"Robô ativado na OKX ({mode_str})." if bot_state["running"] else "Robô parado.")
     return redirect(url_for('index'))
 
 def background_loop():
@@ -536,11 +530,11 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem aberta (OKX): {item['pair']} ({item['trend']})"
+                                    bot_state["log"] = str(f"Ordem aberta (OKX): {item['pair']} ({item['trend']})")
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"REJEITADO OKX: {err_str[:70]}"
+                                    bot_state["log"] = str(f"REJEITADO OKX: {err_str[:70]}")
                                     logging.error(f"Erro ao abrir ordem OKX: {err_str}")
         except Exception as e:
             logging.error(f"Erro no loop principal OKX: {e}")
