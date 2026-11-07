@@ -40,18 +40,26 @@ def get_exchange():
                     'secret': secret,
                     'password': password,
                     'enableRateLimit': True,
-                    'options': {'defaultType': 'linear'}
+                    'options': {
+                        'defaultType': 'linear',
+                        'adjustForTimeDifference': True
+                    }
                 }
+                
                 if bot_state["is_demo"]:
                     config['headers'] = {'x-simulated-trading': '1'}
                 
-                global_exchange = ccxt.okx(config)
+                exchange = ccxt.okx(config)
+                
                 if bot_state["is_demo"]:
-                    global_exchange.set_sandbox_mode(True)
-                global_exchange.load_markets()
+                    exchange.set_sandbox_mode(True)
+                
+                exchange.load_markets()
+                global_exchange = exchange
                 bot_state["log"] = "Conexão OKX estabelecida com sucesso."
-            except Exception as e:
-                bot_state["log"] = "Erro de autenticação ou conexão com a API da OKX."
+            except Exception as err:
+                err_str = str(err) if err else "Falha de parâmetros"
+                bot_state["log"] = f"Erro OKX: {err_str[:60]}"
                 global_exchange = None
     return global_exchange
 
@@ -93,6 +101,7 @@ HTML_TEMPLATE = """
 
         .log-box { background: #0f172a; border-left: 3px solid #f87171; padding: 8px; border-radius: 4px; font-size: 11px; color: #fca5a5; word-break: break-all; max-height: 90px; overflow-y: auto; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
+        .history-item { background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 12px; display: flex; justify-content: space-between; align-items: center; }
         p { margin: 6px 0; font-size: 13px; }
     </style>
     <script>
@@ -141,7 +150,7 @@ HTML_TEMPLATE = """
                     <strong>+{{ "%.2f"|format(initial_balance) }}</strong>
                 </div>
                 <div class="balance-box">
-                    <span>Disponível (DEMO)</span>
+                    <span>Disponível ({{ 'DEMO' if is_demo else 'REAL' }})</span>
                     <strong>+{{ "%.2f"|format(balance) }}</strong>
                 </div>
             </div>
@@ -198,7 +207,13 @@ HTML_TEMPLATE = """
         <div id="historico" class="tab-content">
             <div class="card">
                 <h3>Registo de Operações</h3>
+                {% for h in history %}
+                <div class="history-item">
+                    <div><b>{{ h.pair }}</b></div>
+                </div>
+                {% else %}
                 <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhum registo recente.</p>
+                {% endfor %}
             </div>
         </div>
 
@@ -274,8 +289,8 @@ def fetch_data():
             m_list.append({"pair": sym.split('/')[0], "price": ticker.get('last', 0.0)})
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
-    except Exception as e:
-        bot_state["log"] = "Erro ao sincronizar dados da OKX."
+    except Exception as err:
+        bot_state["log"] = f"Erro de sincronização: {str(err)[:50]}"
 
 @app.route('/api/state')
 def api_state():
@@ -296,6 +311,7 @@ def index():
         realized_pnl=float(bot_state["realized_pnl"] or 0.0),
         active_position=bot_state["active_position"],
         market_data=bot_state["market_data"],
+        history=bot_state["history"],
         api_key=str(bot_state["api_key"] or ""),
         api_secret=str(bot_state["api_secret"] or ""),
         api_password=str(bot_state["api_password"] or ""),
@@ -308,7 +324,7 @@ def index():
 @app.route('/settings', methods=['POST'])
 def settings():
     global global_exchange
-    global_exchange = None
+    global_exchange = None  # Limpa o cache para forçar nova autenticação limpa
     
     bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
     bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
@@ -320,7 +336,7 @@ def settings():
     except:
         bot_state["leverage"] = 21
     
-    bot_state["log"] = "Definições guardadas com sucesso."
+    bot_state["log"] = "Definições guardadas. A testar conexão..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -344,7 +360,7 @@ def background_loop():
         try:
             if bot_state["running"]:
                 fetch_data()
-        except Exception as e:
+        except Exception:
             global_exchange = None
         time.sleep(3)
 
