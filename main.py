@@ -50,20 +50,20 @@ def get_exchange():
                     }
                 }
                 
-                if bot_state["is_demo"]:
+                if bot_state.get("is_demo", True):
                     config['headers'] = {'x-simulated-trading': '1'}
                 
                 global_exchange = ccxt.okx(config)
                 
-                if bot_state["is_demo"]:
+                if bot_state.get("is_demo", True):
                     global_exchange.set_sandbox_mode(True)
                 
                 global_exchange.load_markets()
                 bot_state["log"] = "Conexão OKX estabelecida com sucesso."
             except Exception as e:
-                err_msg = str(e)
+                err_msg = str(e) if e else "Erro desconhecido"
                 logging.error(f"Erro crítico CCXT OKX: {err_msg}")
-                bot_state["log"] = f"Erro API: {err_msg[:60]}"
+                bot_state["log"] = str("Erro API: " + err_msg[:50])
                 global_exchange = None
     return global_exchange
 
@@ -310,8 +310,9 @@ def fetch_market_and_balance():
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
     except Exception as e:
-        logging.error(f"Erro a ler saldo OKX: {e}")
-        bot_state["log"] = f"Erro Saldo: {str(e)[:40]}"
+        err_str = str(e) if e else "Erro de leitura"
+        logging.error(f"Erro a ler saldo OKX: {err_str}")
+        bot_state["log"] = str("Erro Saldo: " + err_str[:40])
 
     market_list = []
     for symbol in PAIRS:
@@ -354,10 +355,10 @@ def index():
     return render_template_string(
         HTML_TEMPLATE,
         configured=configured,
-        running=bot_state["running"],
-        initial_balance=float(bot_state["initial_balance"] or 0.0),
-        balance=float(bot_state["balance"] or 0.0),
-        realized_pnl=float(bot_state["realized_pnl"] or 0.0),
+        running=bool(bot_state.get("running", False)),
+        initial_balance=float(bot_state.get("initial_balance") or 0.0),
+        balance=float(bot_state.get("balance") or 0.0),
+        realized_pnl=float(bot_state.get("realized_pnl") or 0.0),
         active_position=bot_state.get("active_position"),
         market_data=bot_state.get("market_data", []),
         history=bot_state.get("history", []),
@@ -386,7 +387,7 @@ def settings():
         bot_state["leverage"] = 21
     
     fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas com sucesso."
+    bot_state["log"] = str("Definições guardadas com sucesso.")
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -396,12 +397,13 @@ def toggle():
     password = str(bot_state.get("api_password") or "").strip()
 
     if not key or not secret or not password:
-        bot_state["log"] = "Erro: Credenciais em falta nos Ajustes!"
+        bot_state["log"] = str("Erro: Credenciais em falta nos Ajustes!")
         return redirect(url_for('index'))
     
-    bot_state["running"] = not bot_state["running"]
-    mode_str = "DEMO" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = f"Robô ativado ({mode_str})." if bot_state["running"] else "Robô parado."
+    bot_state["running"] = not bot_state.get("running", False)
+    mode_str = "DEMO" if bot_state.get("is_demo", True) else "REAL"
+    status_txt = "Robô ativado (" + mode_str + ")." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = str(status_txt)
     return redirect(url_for('index'))
 
 def background_loop():
