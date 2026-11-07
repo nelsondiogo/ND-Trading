@@ -103,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualiza o painel e logs a cada 3 segundos em tempo real
+            // Atualiza os dados e logs em tempo integral a cada 3 segundos
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -439,7 +439,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e a executar ordens reais." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e operando em tempo real." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -530,7 +530,6 @@ def background_loop():
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
                                 try:
-                                    # Configurar alavancagem antes de enviar ordem para garantir aceitação da corretora
                                     try:
                                         exchange.set_leverage(bot_state["leverage"], symbol)
                                     except Exception:
@@ -557,7 +556,8 @@ def background_loop():
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"Erro Ordem Bybit: {err_str[:90]}"
+                                    # Exibe o erro exato da corretora para sabermos se é saldo ou limite
+                                    bot_state["log"] = f"Erro Bybit: {err_str[:95]}"
                                     logging.error(f"Erro Bybit Ordem: {err_str}")
 
         except Exception as e:
