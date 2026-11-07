@@ -103,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Auto-refresh dos dados e logs a cada 5 segundos
+            // Atualiza o painel e logs a cada 4 segundos em tempo real
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -113,7 +113,7 @@ HTML_TEMPLATE = """
                             if(logBox) logBox.innerText = data.log;
                         }
                     }).catch(err => console.log(err));
-            }, 5000);
+            }, 4000);
         }
     </script>
 </head>
@@ -439,7 +439,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e operando em alta frequência." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e à escuta de sinais de alta frequência." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -533,9 +533,8 @@ def background_loop():
                                     market_info = exchange.market(symbol)
                                     min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
                                     
-                                    notional = bot_state["balance"] * bot_state["leverage"] * 0.95
-                                    calc_amount = notional / item["price"]
-                                    amount = max(calc_amount, min_amount)
+                                    # Forçar a utilização do lote mínimo exato para garantir que a corretora aceite
+                                    amount = min_amount
                                     
                                     order = exchange.create_market_order(symbol, side, amount)
                                     execution_price = order.get('average', item["price"])
@@ -554,7 +553,7 @@ def background_loop():
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"Erro Ordem Bybit: {err_str[:80]}"
+                                    bot_state["log"] = f"Erro Ordem Bybit: {err_str[:90]}"
                                     logging.error(f"Erro Bybit Ordem: {err_str}")
 
         except Exception as e:
