@@ -287,13 +287,13 @@ HTML_TEMPLATE = """
                 <h3>Configuração OKX API</h3>
                 <form action="/settings" method="POST">
                     <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
-                    <input type="text" name="api_key" value="{{ api_key }}">
+                    <input type="text" name="api_key" value="{{ api_key or '' }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
-                    <input type="password" name="api_secret" value="{{ api_secret }}">
+                    <input type="password" name="api_secret" value="{{ api_secret or '' }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Password (Passphrase):</label>
-                    <input type="password" name="api_password" value="{{ api_password }}">
+                    <input type="password" name="api_password" value="{{ api_password or '' }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
@@ -447,13 +447,13 @@ def index():
         active_position=bot_state["active_position"],
         market_data=bot_state["market_data"],
         history=bot_state["history"],
-        api_key=bot_state["api_key"],
-        api_secret="" if not bot_state["api_secret"] else "********",
-        api_password="" if not bot_state["api_password"] else "********",
+        api_key=str(bot_state.get("api_key") or ""),
+        api_secret="" if not bot_state.get("api_secret") else "********",
+        api_password="" if not bot_state.get("api_password") else "********",
         is_demo=bot_state["is_demo"],
         leverage=bot_state["leverage"],
         last_update=bot_state["last_update"],
-        log=bot_state["log"]
+        log=str(bot_state.get("log") or "")
     )
 
 @app.route('/settings', methods=['POST'])
@@ -461,12 +461,11 @@ def settings():
     global global_exchange
     global_exchange = None 
     
-    key = request.form.get("api_key", "").strip()
-    secret = request.form.get("api_secret", "").strip()
-    password = request.form.get("api_password", "").strip()
+    key = str(request.form.get("api_key") or "").strip()
+    secret = str(request.form.get("api_secret") or "").strip()
+    password = str(request.form.get("api_password") or "").strip()
     is_demo_val = True if request.form.get("is_demo") else False
     
-    # Preserva rigorosamente os valores anteriores se os campos vierem mascarados ou vazios
     if key and key != "********":
         bot_state["api_key"] = key
     if secret and not secret.startswith("****") and secret != "********":
@@ -477,7 +476,7 @@ def settings():
     bot_state["is_demo"] = is_demo_val
         
     try:
-        bot_state["leverage"] = int(request.form.get("leverage", 21))
+        bot_state["leverage"] = int(request.form.get("leverage") or 21)
     except ValueError:
         pass
     
