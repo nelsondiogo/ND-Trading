@@ -1,369 +1,162 @@
 import time
-import threading
-import datetime
 import ccxt
-from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 
-app = Flask(__name__)
+class ScalpingEngine:
+    def __init__(self, exchange, pairs, leverage=21):
+        self.exchange = exchange
+        self.pairs = pairs
+        self.leverage = leverage
+        self.active_trade = None
 
-# Estado inicial do robô Bybit
-bot_state = {
-    "running": False,
-    "api_key": "",
-    "api_secret": "",
-    "is_demo": True, # Padrão: Ativar Testnet (Modo Demonstração)
-    "leverage": 21,
-    "initial_balance": 0.0,
-    "balance": 0.0,
-    "realized_pnl": 0.0,
-    "active_position": None,
-    "market_data": [],
-    "history": [],
-    "last_update": "Aguardando...",
-    "log": "Sistema Bybit pronto. Insira as credenciais em Ajustes."
-}
-
-# Pares de USDT Lineares (Futuros) da Bybit
-PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
-
-# Variável global para a instância da exchange Bybit
-global_exchange = None
-
-# Função limpa para obter a instância da exchange Bybit
-def get_exchange():
-    global global_exchange
-    key = bot_state["api_key"].strip()
-    secret = bot_state["api_secret"].strip()
-
-    # Se não houver chaves, não tentar conexão
-    if not key or not secret:
-        return None
-
-    if global_exchange is None:
+    def set_leverage(self, symbol):
         try:
-            exchange_config = {
-                'apiKey': key,
-                'secret': secret,
-                'enableRateLimit': True,
-                'options': {
-                    'defaultType': 'linear', # Importante: Futuros USDT lineares
-                    'adjustForTimeDifference': True # Correção para erros de sincronização de tempo
-                }
-            }
-            
-            # Criar instância Bybit
-            exchange = ccxt.bybit(exchange_config)
-            
-            # Ativar Sandbox se for Demo e configurar endpoints corretos
-            if bot_state["is_demo"]:
-                exchange.urls['api'] = exchange.urls['test'] # Forçar endpoint de teste
-                exchange.set_sandbox_mode(True)
+            # Configurar alavancagem cruzada e margem para futuros lineares USDT
+            self.exchange.set_leverage(self.leverage, symbol)
+        except Exception:
+            pass
+
+    def scan_best_market(self):
+        """Varre os pares ativos e identifica o que tem melhor momento direcional e volume."""
+        best_pair = None
+        best_score = -999.0
+        target_side = 'buy'
+
+        for sym in self.pairs:
+            try:
+                ohlcv = self.exchange.fetch_ohlcv(sym, timeframe='1m', limit=5)
+                if len(ohlcv) < 5:
+                    continue
                 
-            # Carregar mercados para validar conexão
-            exchange.load_markets()
-            global_exchange = exchange
-            bot_state["log"] = "Conexão Bybit estabelecida com sucesso."
-        except Exception:
-            # Mensagem fixa e estática em caso de erro
-            bot_state["log"] = "Erro de autenticação Bybit. Verifique as chaves e o modo Testnet."
-            global_exchange = None
-            
-    return global_exchange
+                # Extrair fechos para calcular variação de curto prazo (Momentum HFT)
+                closes = [x[4] for x in ohlcv]
+                volumes = [x[5] for x in ohlcv]
+                
+                # Variação percentual dos últimos minutos
+                price_change = (closes[-1] - closes[0]) / closes[0]
+                avg_volume = sum(volumes) / len(volumes)
+                
+                # Filtro de Saturação: Se o preço oscilou demais sem pausa, o mercado está saturado
+                if abs(price_change) > 0.015:  # Mais de 1.5% num minuto indica exaustão/saturação
+                    continue
 
-# Template HTML limpo e simplificado
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="pt">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BYBIT SCALPING</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 8px 8px 75px 8px; }
-        .container { max-width: 480px; margin: auto; }
-        h1 { color: #f59e0b; text-align: center; font-size: 18px; margin: 8px 0 2px 0; font-weight: 700; }
-        .clock { text-align: center; font-size: 11px; color: #38bdf8; margin-bottom: 10px; font-weight: bold; }
-        
-        .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-        .balance-box { background: #1e293b; border: 1px solid #334155; padding: 10px; border-radius: 8px; text-align: center; }
-        .balance-box span { display: block; font-size: 10px; color: #94a3b8; text-transform: uppercase; margin-bottom: 2px; }
-        .balance-box strong { font-size: 14px; color: #f59e0b; }
-        
-        .card { background: #1e293b; border: 1px solid #334155; padding: 12px; border-radius: 8px; margin-bottom: 10px; }
-        .card h3 { color: #38bdf8; font-size: 12px; margin-top: 0; margin-bottom: 8px; text-transform: uppercase; }
-        
-        input[type="text"], input[type="password"], input[type="number"] { width: 100% !important; padding: 8px; margin-top: 4px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
-        .checkbox-container { display: flex; align-items: center; gap: 8px; margin: 8px 0; font-size: 13px; color: #cbd5e1; cursor: pointer; }
-        
-        .tab-content { display: none; }
-        .tab-content.active { display: block; }
-        
-        .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #1e293b; border-top: 1px solid #334155; display: flex; justify-content: space-around; align-items: center; padding: 6px 0; z-index: 100; height: 50px; }
-        .nav-btn { background: none; border: none; color: #94a3b8; font-size: 10px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
-        .nav-btn.active { color: #f59e0b; }
-        
-        .center-toggle-container { flex: 0; display: flex; justify-content: center; position: relative; bottom: 10px; }
-        .btn-circle { width: 44px; height: 44px; border-radius: 50%; border: none; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; color: white; }
-        .btn-circle.start { background: #16a34a; }
-        .btn-circle.stop { background: #dc2626; }
+                # Pontuação de direção baseada em momentum e volume
+                score = abs(price_change) * avg_volume
+                
+                if score > best_score:
+                    best_score = score
+                    best_pair = sym
+                    target_side = 'buy' if price_change > 0 else 'sell'
+            except Exception:
+                continue
 
-        .log-box { background: #0f172a; border-left: 3px solid #f59e0b; padding: 8px; border-radius: 4px; font-size: 11px; color: #fde68a; word-break: break-all; max-height: 90px; overflow-y: auto; }
-        .market-item { display: flex; justify-content: space-between; align-items: center; background: #334155; padding: 8px 10px; border-radius: 6px; margin-bottom: 6px; font-size: 13px; }
-        p { margin: 6px 0; font-size: 13px; }
-    </style>
-    <script>
-        // Função para trocar de aba
-        function showTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
-            document.getElementById(tabId).classList.add('active');
-            if(document.getElementById('btn-' + tabId)) {
-                document.getElementById('btn-' + tabId).classList.add('active');
-            }
-            // Guardar aba ativa
-            localStorage.setItem('activeBybitTab', tabId);
-        }
+        return best_pair, target_side
 
-        // Carregar aba ativa e atualizar relógio
-        window.onload = function() {
-            let savedTab = localStorage.getItem('activeBybitTab');
-            if (savedTab && document.getElementById(savedTab)) {
-                showTab(savedTab);
-            }
-            setInterval(function() {
-                fetch('/api/state')
-                    .then(response => response.json())
-                    .then(data => {
-                        if(data.log) {
-                            let logBox = document.querySelector('.log-box');
-                            if(logBox) logBox.innerText = data.log;
-                        }
-                        if(data.last_update) {
-                            let clock = document.querySelector('.clock');
-                            if(clock) clock.innerText = "Sincronizado: " + data.last_update;
-                        }
-                    });
-            }, 2000);
-        }
-    </script>
-</head>
-<body>
-    <div class="container">
-        <h1>BYBIT SCALPING</h1>
-        <div class="clock">Sincronizado: {{ last_update }}</div>
+    def execute_scalp_loop(self, bot_state):
+        """Ciclo principal de alta frequência, gestão de risco e trailing stop no cume."""
+        while bot_state["running"]:
+            try:
+                ex = self.exchange
+                if not ex:
+                    time.sleep(1)
+                    continue
 
-        <!-- ABA DASHBOARD -->
-        <div id="dashboard" class="tab-content active">
-            <div class="balance-grid">
-                <div class="balance-box">
-                    <span>Inicial</span>
-                    <strong>+{{ "%.2f"|format(initial_balance) }}</strong>
-                </div>
-                <div class="balance-box">
-                    <span>Disponível ({{ 'TESTNET' if is_demo else 'REAL' }})</span>
-                    <strong>+{{ "%.2f"|format(balance) }}</strong>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Posição Ativa</h3>
-                {% if active_position %}
-                    <p>Ativo: <b>{{ active_position.pair }}</b></p>
-                {% else %}
-                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Aguardando chaves Bybit válidas.</p>
-                {% endif %}
-            </div>
-
-            <div class="card">
-                <h3>Capital & Alavancagem</h3>
-                <p>Alavancagem: <b>{{ leverage }}x</b> | Poder: <b>+{{ "%.2f"|format(balance * leverage) }}</b></p>
-            </div>
-
-            <div class="balance-grid">
-                <div class="balance-box">
-                    <span>Status</span>
-                    <strong style="color: {{ '#4ade80' if running else '#f87171' }}; font-size: 13px;">{{ 'OPERANDO' if running else 'PARADO' }}</strong>
-                </div>
-                <div class="balance-box">
-                    <span>PNL Realizado</span>
-                    <strong style="font-size: 13px;">{{ "%.4f"|format(realized_pnl) }}</strong>
-                </div>
-            </div>
-
-            <div class="card">
-                <h3>Log do Sistema</h3>
-                <div class="log-box">{{ log }}</div>
-            </div>
-        </div>
-
-        <!-- ABA MERCADO -->
-        <div id="mercado" class="tab-content">
-            <div class="card">
-                <h3>Mercado em Tempo Real</h3>
-                {% if market_data %}
-                    {% for item in market_data %}
-                    <div class="market-item">
-                        <div>
-                            <b>{{ item.pair }}</b><br>
-                            <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
-                        </div>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Sincronize as chaves Bybit para ver dados de mercado.</p>
-                {% endif %}
-            </div>
-        </div>
-
-        <!-- ABA HISTÓRICO -->
-        <div id="historico" class="tab-content">
-            <div class="card">
-                <h3>Registo de Operações</h3>
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">Aguardando chaves válidas e operações.</p>
-            </div>
-        </div>
-
-        <!-- ABA AJUSTES -->
-        <div id="ajustes" class="tab-content">
-            <div class="card">
-                <h3>Configuração Bybit API</h3>
-                <form action="/settings" method="POST">
-                    <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
-                    <input type="text" name="api_key" value="{{ api_key }}">
+                # 1. Se não houver posição ativa, procurar o melhor ativo livre de saturação
+                if not self.active_trade:
+                    bot_state["log"] = "A escanear mercado em busca de direção..."
+                    pair, side = self.scan_best_market()
                     
-                    <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
-                    <input type="password" name="api_secret" value="{{ api_secret }}">
+                    if not pair:
+                        bot_state["log"] = "Mercado saturado ou sem direção clara. A procurar..."
+                        time.sleep(2)
+                        continue
+
+                    # Preparar e abrir ordem de alta frequência
+                    self.set_leverage(pair)
+                    ticker = ex.fetch_ticker(pair)
+                    entry_price = ticker['ask'] if side == 'buy' else ticker['bid']
                     
-                    <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
-                    <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
+                    # Calcular tamanho da ordem baseado no saldo disponível
+                    balance_info = ex.fetch_balance()
+                    usdt_free = float(balance_info.get('free', {}).get('USDT', 0.0))
                     
-                    <label class="checkbox-container">
-                        <input type="checkbox" name="is_demo" {% if is_demo %}checked{% endif %}>
-                        Usar Testnet (Modo Demonstração)
-                    </label>
+                    if usdt_free < 5.0:
+                        bot_state["log"] = "Saldo insuficiente para operar."
+                        time.sleep(5)
+                        continue
+
+                    amount_usdt = usdt_free * 0.95 * self.leverage  # Usar 95% do capital com alavancagem
+                    amount_coins = amount_usdt / entry_price
+
+                    # Executar ordem de mercado (Velocidade HFT)
+                    order = ex.create_order(pair, 'market', side, amount_coins)
                     
-                    <button type="submit" style="width: 100%; padding: 10px; border-radius: 6px; border: none; font-size: 14px; font-weight: bold; cursor: pointer; background: #f59e0b; color: #0f172a; margin-top: 6px;">Guardar Definições</button>
-                </form>
-            </div>
-        </div>
+                    self.active_trade = {
+                        "pair": pair,
+                        "side": side,
+                        "entry_price": entry_price,
+                        "amount": amount_coins,
+                        "highest_price": entry_price,
+                        "take_profit_target": entry_price * (1.004 if side == 'buy' else 0.996), # Alvo inicial +0.4%
+                        "stop_loss": entry_price * (0.995 if side == 'buy' else 1.005)      # Stop inicial -0.5%
+                    }
+                    bot_state["active_position"] = self.active_trade
+                    bot_state["log"] = f"Entrada executada em {pair} ({side.upper()}) a {entry_price}"
 
-        <div class="nav-bar">
-            <button id="btn-dashboard" class="nav-btn active" onclick="showTab('dashboard')">📊<br>Dashboard</button>
-            <button id="btn-mercado" class="nav-btn" onclick="showTab('mercado')">📈<br>Mercado</button>
-            
-            <div class="center-toggle-container">
-                <form action="/toggle" method="POST" style="margin:0;">
-                    <button type="submit" class="btn-circle {{ 'stop' if running else 'start' }}">
-                        {{ '⏹' if running else '▶' }}
-                    </button>
-                </form>
-            </div>
+                # 2. Gestão em Tempo Real da Posição Ativa (Trailing Stop no Cume & Proteção de Inversão)
+                else:
+                    trade = self.active_trade
+                    pair = trade["pair"]
+                    side = trade["side"]
+                    entry_price = trade["entry_price"]
 
-            <button id="btn-historico" class="nav-btn" onclick="showTab('historico')">📋<br>Histórico</button>
-            <button id="btn-ajustes" class="nav-btn" onclick="showTab('ajustes')">⚙️<br>Ajustes</button>
-        </div>
-    </div>
-</body>
-</html>
-"""
+                    ticker = ex.fetch_ticker(pair)
+                    current_price = ticker['bid'] if side == 'buy' else ticker['ask']
 
-# Função para atualizar dados da Bybit em background
-def fetch_data():
-    ex = get_exchange()
-    if not ex:
-        return
-    try:
-        # Obter saldo da conta unificada/futuros lineares
-        bal = ex.fetch_balance()
-        # Bybit v5 USDT Linear
-        total = float(bal.get('total', {}).get('USDT', 0.0))
-        if total > 0:
-            if bot_state["initial_balance"] == 0.0:
-                bot_state["initial_balance"] = total
-            bot_state["balance"] = total
+                    # Atualizar o cume do lucro (Trailing Peak) em tempo real
+                    if side == 'buy':
+                        if current_price > trade["highest_price"]:
+                            trade["highest_price"] = current_price
+                            # O stop móvel fixa-se logo abaixo do cume para garantir lucro máximo
+                            trade["stop_loss"] = current_price * 0.998  # Protege com margem de 0.2% do topo
+                    else:
+                        if current_price < trade["highest_price"]:
+                            trade["highest_price"] = current_price
+                            trade["stop_loss"] = current_price * 1.002
 
-        # Obter preços de mercado
-        m_list = []
-        for sym in PAIRS:
-            ticker = ex.fetch_ticker(sym)
-            m_list.append({"pair": sym.split('/')[0], "price": ticker.get('last', 0.0)})
-        bot_state["market_data"] = m_list
-        bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
-    except Exception:
-        # Silenciar erros de rede no background para evitar poluição de logs
-        pass
+                    # Condições de fecho instantâneo (Take Profit, Trailing Hit ou Inversão Contrária)
+                    should_close = False
+                    close_reason = ""
 
-# Rota API limpa para o estado
-@app.route('/api/state')
-def api_state():
-    return jsonify({
-        "log": str(bot_state["log"]),
-        "last_update": str(bot_state["last_update"])
-    })
+                    if side == 'buy':
+                        if current_price <= trade["stop_loss"]:
+                            should_close = True
+                            close_reason = "Trailing Stop / Proteção de Cume atingida"
+                        elif current_price >= trade["entry_price"] * 1.008: # Alvo técnico de scalping rápido
+                            should_close = True
+                            close_reason = "Take Profit rápido atingido"
+                    else:
+                        if current_price >= trade["stop_loss"]:
+                            should_close = True
+                            close_reason = "Trailing Stop / Proteção de Cume atingida"
+                        elif current_price <= trade["entry_price"] * 0.992:
+                            should_close = True
+                            close_reason = "Take Profit rápido atingido"
 
-# Rota principal (Dashboard)
-@app.route('/')
-def index():
-    return render_template_string(
-        HTML_TEMPLATE,
-        running=bot_state["running"],
-        initial_balance=float(bot_state["initial_balance"]),
-        balance=float(bot_state["balance"]),
-        realized_pnl=float(bot_state["realized_pnl"]),
-        active_position=bot_state["active_position"],
-        market_data=bot_state["market_data"],
-        history=bot_state["history"],
-        api_key=str(bot_state["api_key"]),
-        api_secret=str(bot_state["api_secret"]),
-        leverage=int(bot_state["leverage"]),
-        is_demo=bool(bot_state["is_demo"]),
-        last_update=str(bot_state["last_update"]),
-        log=str(bot_state["log"])
-    )
+                    if should_close:
+                        # Fechar posição imediatamente a mercado
+                        close_side = 'sell' if side == 'buy' else 'buy'
+                        ex.create_order(pair, 'market', close_side, trade["amount"])
+                        
+                        # Calcular PnL realizado
+                        pnl = (current_price - entry_price) * trade["amount"] if side == 'buy' else (entry_price - current_price) * trade["amount"]
+                        bot_state["realized_pnl"] += pnl
+                        bot_state["log"] = f"Posição fechada: {close_reason}. PnL: {pnl:.4f} USDT"
+                        
+                        # Resetar posição para o scanner retomar imediatamente sem perder tempo
+                        self.active_trade = None
+                        bot_state["active_position"] = None
 
-# Rota para salvar definições
-@app.route('/settings', methods=['POST'])
-def settings():
-    global global_exchange
-    global_exchange = None  # Resetar instância para forçar nova conexão
-    
-    bot_state["api_key"] = str(request.form.get("api_key")).strip()
-    bot_state["api_secret"] = str(request.form.get("api_secret")).strip()
-    bot_state["is_demo"] = True if request.form.get("is_demo") else False
-    
-    try:
-        bot_state["leverage"] = int(request.form.get("leverage"))
-    except:
-        bot_state["leverage"] = 21
-    
-    bot_state["log"] = "Definições Bybit guardadas. A ligar..."
-    return redirect(url_for('index'))
-
-# Rota para iniciar/parar
-@app.route('/toggle', methods=['POST'])
-def toggle():
-    if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves Bybit em Ajustes!"
-        return redirect(url_for('index'))
-    
-    bot_state["running"] = not bot_state["running"]
-    mode_str = "TESTNET" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = f"Robô Bybit ativado ({mode_str})." if bot_state["running"] else "Robô parado."
-    return redirect(url_for('index'))
-
-# Thread de background limpa
-def background_loop():
-    global global_exchange
-    while True:
-        try:
-            if bot_state["running"]:
-                fetch_data()
-        except Exception:
-            global_exchange = None
-        time.sleep(3) # Atualizar a cada 3 segundos
-
-if __name__ == '__main__':
-    t = threading.Thread(target=background_loop, daemon=True)
-    t.start()
-    # Executar Flask
-    app.run(host='0.0.0.0', port=5000)
+                time.sleep(0.5)  # Frequência de varredura ultrarrápida (HFT)
+            except Exception as e:
+                bot_state["log"] = f"Erro no ciclo HFT: str(e)[:30]"
+                time.sleep(2)
