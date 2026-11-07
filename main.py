@@ -54,8 +54,8 @@ def get_exchange():
             exchange.load_markets()
             global_exchange = exchange
             bot_state["log"] = "Conexão OKX estabelecida com sucesso."
-        except Exception:
-            bot_state["log"] = "Erro de autenticação na OKX. Verifique as credenciais."
+        except Exception as e:
+            bot_state["log"] = f"Erro OKX: Verifique API Key, Secret ou Passphrase."
             global_exchange = None
     return global_exchange
 
