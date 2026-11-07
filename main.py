@@ -103,7 +103,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualização assíncrona leve para não travar a página
+            // Atualização contínua leve de dados e logs
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -379,14 +379,16 @@ def fetch_market_and_balance():
 
 @app.route('/api/state')
 def api_state():
-    # Atualiza o mercado em background sem prender a página web
     if bot_state["api_key"] and bot_state["api_secret"]:
-        threading.Thread(target=fetch_market_and_balance, daemon=True).start()
+        fetch_market_and_balance()
     return jsonify({"log": bot_state["log"]})
 
 @app.route('/')
 def index():
-    # Rota principal rápida: não bloqueia o carregamento com chamadas síncronas à API
+    # Atualiza o saldo e o mercado imediatamente ao abrir ou atualizar a página, sem precisar do Play
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        fetch_market_and_balance()
+        
     configured = bool(bot_state["api_key"] and bot_state["api_secret"])
     return render_template_string(
         HTML_TEMPLATE,
@@ -422,6 +424,7 @@ def settings():
     except ValueError:
         pass
     
+    fetch_market_and_balance()
     bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
