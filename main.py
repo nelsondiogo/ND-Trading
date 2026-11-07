@@ -2,7 +2,7 @@ import time
 import threading
 import logging
 import ccxt
-from flask import Flask, render_template_string, request, redirect, url_for
+from flask import Flask, render_template_string, request, redirect, url_for, jsonify
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 
@@ -23,8 +23,8 @@ bot_state = {
     "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
-# Pares validados e otimizados para alta frequência na Bybit
-PAIRS = ['ADA/USDT', 'TRX/USDT', 'DOGE/USDT', 'XRP/USDT']
+# Pares lineares oficiais Bybit V5
+PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045       # 4.5%
 STOP_LOSS_PCT = 0.012         # 1.2%
@@ -85,6 +85,17 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
+            // Auto-refresh a cada 8 segundos para garantir dados dinâmicos em tempo real sem precisar recarregar manualmente
+            setInterval(function() {
+                fetch('/api/state')
+                    .then(response => response.json())
+                    .then(data => {
+                        if(data.log) {
+                            let logBox = document.querySelector('.log-box');
+                            if(logBox) logBox.innerText = data.log;
+                        }
+                    }).catch(err => console.log(err));
+            }, 8000);
         }
     </script>
 </head>
@@ -319,14 +330,9 @@ def fetch_market_and_balance():
             bot_state["balance"] = total
 
         market_list = []
-        for base_pair in PAIRS:
-            symbol = base_pair
+        for symbol in PAIRS:
             if symbol not in exchange.markets:
-                if f"{base_pair}:USDT" in exchange.markets:
-                    symbol = f"{base_pair}:USDT"
-                elif f"{base_pair}/USDT:USDT" in exchange.markets:
-                    symbol = f"{base_pair}/USDT:USDT"
-
+                continue
             try:
                 ticker = exchange.fetch_ticker(symbol)
                 current_price = ticker.get('last', 0.0)
@@ -346,8 +352,9 @@ def fetch_market_and_balance():
                 else:
                     trend = "NEUTRO"
 
+                clean_name = symbol.split('/')[0]
                 market_list.append({
-                    "pair": base_pair.split('/')[0],
+                    "pair": clean_name,
                     "symbol": symbol,
                     "price": current_price,
                     "rsi_5m": rsi_5m,
@@ -362,6 +369,13 @@ def fetch_market_and_balance():
             
     except Exception as e:
         logging.error(f"Erro na sincronização síncrona: {e}")
+
+@app.route('/api/state')
+def api_state():
+    # Rota auxiliar para atualizar os dados em background via AJAX a cada 8 segundos
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        fetch_market_and_balance()
+    return jsonify({"log": bot_state["log"]})
 
 @app.route('/')
 def index():
@@ -504,15 +518,14 @@ def background_loop():
                                 symbol = item["symbol"]
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
-                                # Força o lote mínimo permitido pela Bybit para garantir execução
-                                market_info = exchange.market(symbol)
-                                min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
-                                
-                                notional = bot_state["balance"] * bot_state["leverage"] * 0.95
-                                calc_amount = notional / item["price"]
-                                amount = max(calc_amount, min_amount)
-                                
                                 try:
+                                    market_info = exchange.market(symbol)
+                                    min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
+                                    
+                                    notional = bot_state["balance"] * bot_state["leverage"] * 0.95
+                                    calc_amount = notional / item["price"]
+                                    amount = max(calc_amount, min_amount)
+                                    
                                     order = exchange.create_market_order(symbol, side, amount)
                                     execution_price = order.get('average', item["price"])
                                     
@@ -529,7 +542,10 @@ def background_loop():
                                     bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']}) a {execution_price}"
                                     break
                                 except Exception as ord_err:
-                                    bot_state["log"] = f"Aviso Bybit: {str(ord_err)[:50]}"
+                                    # Grava o erro exato na tela para visualização imediata
+                                    err_str = str(ord_err)
+                                    bot_state["log"] = f"Erro Ordem: {err_str[:80]}"
+                                    logging.error(f"Erro Bybit Ordem: {err_str}")
 
         except Exception as e:
             logging.error(f"Erro crítico no background_loop: {e}")
