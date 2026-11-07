@@ -25,8 +25,8 @@ bot_state = {
     "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
-# Pares de menor valor unitário na Bybit Linear para testes ágeis
-PAIRS = ['SHIB/USDT:USDT', 'PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 'BONK/USDT:USDT']
+# Pares oficiais validados na Bybit Linear
+PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045
 STOP_LOSS_PCT = 0.012
@@ -330,11 +330,9 @@ def fetch_market_and_balance():
         bot_state["log"] = "Erro: Falha na instância CCXT."
         return
 
-    # Leitura direta e exata do saldo real na corretora (Conta Unificada / Linear V5)
     try:
         balance_data = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
-        
         if 'info' in balance_data and isinstance(balance_data['info'], dict):
             res_list = balance_data['info'].get('result', {}).get('list', [])
             if res_list:
