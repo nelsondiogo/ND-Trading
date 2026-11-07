@@ -103,7 +103,6 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Atualiza os dados e logs em tempo integral a cada 3 segundos
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -439,7 +438,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e operando em tempo real." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado (Modo Original)." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -530,14 +529,9 @@ def background_loop():
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 
                                 try:
-                                    try:
-                                        exchange.set_leverage(bot_state["leverage"], symbol)
-                                    except Exception:
-                                        pass
-
-                                    market_info = exchange.market(symbol)
-                                    min_amount = market_info.get('limits', {}).get('amount', {}).get('min', 1.0)
-                                    amount = min_amount
+                                    # Lógica original direta de cálculo baseada no poder total da conta
+                                    notional = bot_state["balance"] * bot_state["leverage"] * 0.95
+                                    amount = notional / item["price"]
                                     
                                     order = exchange.create_market_order(symbol, side, amount)
                                     execution_price = order.get('average', item["price"])
@@ -556,9 +550,8 @@ def background_loop():
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    # Exibe o erro exato da corretora para sabermos se é saldo ou limite
-                                    bot_state["log"] = f"Erro Bybit: {err_str[:95]}"
-                                    logging.error(f"Erro Bybit Ordem: {err_str}")
+                                    bot_state["log"] = f"Erro Ordem: {err_str[:90]}"
+                                    logging.error(f"Erro Ordem Bybit: {err_str}")
 
         except Exception as e:
             logging.error(f"Erro crítico no background_loop: {e}")
