@@ -58,8 +58,9 @@ def get_exchange():
                 global_exchange = exchange
                 bot_state["log"] = "Conexão OKX estabelecida com sucesso."
             except Exception as err:
-                err_str = str(err) if err else "Falha de parâmetros"
-                bot_state["log"] = f"Erro OKX: {err_str[:60]}"
+                # Tratamento estrito e seguro para evitar qualquer NoneType
+                msg = str(err) if err is not None else "Erro desconhecido"
+                bot_state["log"] = str("Erro OKX: " + msg[:50])
                 global_exchange = None
     return global_exchange
 
@@ -290,7 +291,8 @@ def fetch_data():
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
     except Exception as err:
-        bot_state["log"] = f"Erro de sincronização: {str(err)[:50]}"
+        m_err = str(err) if err is not None else "Erro de loop"
+        bot_state["log"] = str("Erro sync: " + m_err[:40])
 
 @app.route('/api/state')
 def api_state():
@@ -324,7 +326,7 @@ def index():
 @app.route('/settings', methods=['POST'])
 def settings():
     global global_exchange
-    global_exchange = None  # Limpa o cache para forçar nova autenticação limpa
+    global_exchange = None  # Reseta o objeto para aceitar novas credenciais limpas
     
     bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
     bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
@@ -336,7 +338,7 @@ def settings():
     except:
         bot_state["leverage"] = 21
     
-    bot_state["log"] = "Definições guardadas. A testar conexão..."
+    bot_state["log"] = "Definições guardadas. A testar ligação..."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
