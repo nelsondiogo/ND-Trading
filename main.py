@@ -3,7 +3,6 @@ import threading
 import datetime
 import ccxt.pro as ccxtpro
 from flask import Flask, render_template_string, request, redirect, url_for, jsonify
-from strategy import ScalpingEngine
 
 app = Flask(__name__)
 
@@ -19,11 +18,162 @@ bot_state = {
     "active_position": None,
     "market_data": [],
     "last_update": "Aguardando...",
-    "log": "Motor HFT pronto. Configure as chaves Bybit."
+    "log": "Motor HFT pronto. Configure as chaves Bybit em Ajustes."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
 global_exchange = None
+
+class ScalpingEngine:
+    def __init__(self, exchange, pairs, leverage=21):
+        self.exchange = exchange
+        self.pairs = pairs
+        self.leverage = leverage
+        self.active_trade = None
+
+    async def initialize_market(self, symbol):
+        try:
+            await self.exchange.set_leverage(self.leverage, symbol)
+        except Exception:
+            pass
+
+    async def scan_market(self):
+        best_pair = None
+        best_score = -999.0
+        target_side = 'buy'
+
+        for sym in self.pairs:
+            try:
+                ohlcv = await self.exchange.fetch_ohlcv(sym, timeframe='1m', limit=3)
+                if len(ohlcv) < 3:
+                    continue
+                
+                closes = [x[4] for x in ohlcv]
+                volumes = [x[5] for x in ohlcv]
+                price_change = (closes[-1] - closes[0]) / closes[0]
+                
+                # Filtro de Saturação: Descarta se o mercado oscilou > 1.5% num minuto
+                if abs(price_change) > 0.015:
+                    continue
+
+                score = abs(price_change) * (sum(volumes) / len(volumes))
+                if score > best_score:
+                    best_score = score
+                    best_pair = sym
+                    target_side = 'buy' if price_change > 0 else 'sell'
+            except Exception:
+                continue
+
+        return best_pair, target_side
+
+    async def execute_hft_loop(self, bot_state):
+        while bot_state["running"]:
+            try:
+                ex = self.exchange
+                if not ex:
+                    await asyncio.sleep(1)
+                    continue
+
+                if not self.active_trade:
+                    bot_state["log"] = "A escanear ativos livres de saturação..."
+                    pair, side = await self.scan_market()
+                    
+                    if not pair:
+                        bot_state["log"] = "Mercado saturado. A procurar nova direção..."
+                        await asyncio.sleep(1)
+                        continue
+
+                    await self.initialize_market(pair)
+                    ticker = await ex.fetch_ticker(pair)
+                    entry_price = ticker['ask'] if side == 'buy' else ticker['bid']
+                    
+                    balance = await ex.fetch_balance()
+                    usdt_free = float(balance.get('free', {}).get('USDT', 0.0))
+                    
+                    if usdt_free < 5.0:
+                        bot_state["log"] = "Saldo USDT insuficiente para ordens."
+                        await asyncio.sleep(3)
+                        continue
+
+                    amount = (usdt_free * 0.95 * self.leverage) / entry_price
+                    await ex.create_order(pair, 'market', side, amount)
+
+                    # Matriz de Risco: SL 1.2%, TP 4.5%, Stop Dinamite ativado a +0.75%
+                    self.active_trade = {
+                        "pair": pair,
+                        "side": side,
+                        "entry_price": entry_price,
+                        "amount": amount,
+                        "highest_price": entry_price,
+                        "dynamite_active": False,
+                        "stop_loss": entry_price * (0.988 if side == 'buy' else 1.012),
+                        "take_profit": entry_price * (1.045 if side == 'buy' else 0.955)
+                    }
+                    bot_state["active_position"] = self.active_trade
+                    bot_state["log"] = f"Entrada HFT em {pair} ({side.upper()}) a {entry_price}"
+
+                else:
+                    trade = self.active_trade
+                    pair = trade["pair"]
+                    side = trade["side"]
+                    entry_price = trade["entry_price"]
+
+                    ticker = await ex.fetch_ticker(pair)
+                    current_price = ticker['bid'] if side == 'buy' else ticker['ask']
+
+                    pnl_pct = ((current_price - entry_price) / entry_price) if side == 'buy' else ((entry_price - current_price) / entry_price)
+
+                    # Atualizar Cume do Lucro e Ativar Stop Dinamite a partir de +0.75%
+                    if side == 'buy':
+                        if current_price > trade["highest_price"]:
+                            trade["highest_price"] = current_price
+                        if pnl_pct >= 0.0075:
+                            trade["dynamite_active"] = True
+                            dynamic_stop = trade["highest_price"] * 0.998
+                            if dynamic_stop > trade["stop_loss"]:
+                                trade["stop_loss"] = dynamic_stop
+                    else:
+                        if current_price < trade["highest_price"]:
+                            trade["highest_price"] = current_price
+                        if pnl_pct >= 0.0075:
+                            trade["dynamite_active"] = True
+                            dynamic_stop = trade["highest_price"] * 1.002
+                            if dynamic_stop < trade["stop_loss"]:
+                                trade["stop_loss"] = dynamic_stop
+
+                    should_close = False
+                    reason = ""
+
+                    if side == 'buy':
+                        if current_price <= trade["stop_loss"]:
+                            should_close = True
+                            reason = "Stop Dinamite / Stop Loss atingido"
+                        elif current_price >= trade["take_profit"]:
+                            should_close = True
+                            reason = "Take Profit de 4.5% atingido"
+                    else:
+                        if current_price >= trade["stop_loss"]:
+                            should_close = True
+                            reason = "Stop Dinamite / Stop Loss atingido"
+                        elif current_price <= trade["take_profit"]:
+                            should_close = True
+                            reason = "Take Profit de 4.5% atingido"
+
+                    if should_close:
+                        close_side = 'sell' if side == 'buy' else 'buy'
+                        await ex.create_order(pair, 'market', close_side, trade["amount"])
+                        
+                        pnl_val = (current_price - entry_price) * trade["amount"] if side == 'buy' else (entry_price - current_price) * trade["amount"]
+                        bot_state["realized_pnl"] += pnl_val
+                        bot_state["log"] = f"Fechado: {reason}. PnL: {pnl_val:.4f} USDT"
+                        
+                        self.active_trade = None
+                        bot_state["active_position"] = None
+
+                await asyncio.sleep(0.3)
+            except Exception as e:
+                bot_state["log"] = "Erro no ciclo HFT."
+                await asyncio.sleep(2)
 
 async def async_main_loop():
     global global_exchange
@@ -45,7 +195,6 @@ async def async_main_loop():
                         await global_exchange.load_markets()
                         bot_state["log"] = "Conexão Bybit HFT ativa."
 
-                    # Atualizar saldo e tickers
                     bal = await global_exchange.fetch_balance()
                     total = float(bal.get('total', {}).get('USDT', 0.0))
                     if total > 0:
@@ -53,11 +202,10 @@ async def async_main_loop():
                             bot_state["initial_balance"] = total
                         bot_state["balance"] = total
 
-                    # Executar motor de scalping
                     engine = ScalpingEngine(global_exchange, PAIRS, bot_state["leverage"])
                     await engine.execute_hft_loop(bot_state)
 
-                except Exception as e:
+                except Exception:
                     bot_state["log"] = "Erro de conexão API. A tentar reconectar..."
                     global_exchange = None
                     await asyncio.sleep(3)
