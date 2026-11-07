@@ -30,6 +30,21 @@ TAKE_PROFIT_PCT = 0.045       # 4.5%
 STOP_LOSS_PCT = 0.012         # 1.2%
 TRAILING_ACTIVATE_PCT = 0.005 # 0.5%
 
+# Instância global otimizada para evitar Rate Limit
+global_exchange = None
+
+def get_exchange():
+    global global_exchange
+    if global_exchange is None and bot_state["api_key"] and bot_state["api_secret"]:
+        global_exchange = ccxt.bybit({
+            'apiKey': bot_state["api_key"],
+            'secret': bot_state["api_secret"],
+            'enableRateLimit': True,
+            'options': {'defaultType': 'linear'}
+        })
+        global_exchange.load_markets()
+    return global_exchange
+
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt">
@@ -85,7 +100,7 @@ HTML_TEMPLATE = """
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
-            // Auto-refresh a cada 8 segundos para garantir dados dinâmicos em tempo real sem precisar recarregar manualmente
+            // Auto-refresh dos dados e logs a cada 5 segundos em tempo real
             setInterval(function() {
                 fetch('/api/state')
                     .then(response => response.json())
@@ -95,7 +110,7 @@ HTML_TEMPLATE = """
                             if(logBox) logBox.innerText = data.log;
                         }
                     }).catch(err => console.log(err));
-            }, 8000);
+            }, 5000);
         }
     </script>
 </head>
@@ -301,13 +316,9 @@ def fetch_market_and_balance():
     if not bot_state["api_key"] or not bot_state["api_secret"]:
         return
     try:
-        exchange = ccxt.bybit({
-            'apiKey': bot_state["api_key"],
-            'secret': bot_state["api_secret"],
-            'enableRateLimit': True,
-            'options': {'defaultType': 'linear'}
-        })
-        exchange.load_markets()
+        exchange = get_exchange()
+        if not exchange:
+            return
         
         bal = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
@@ -331,8 +342,6 @@ def fetch_market_and_balance():
 
         market_list = []
         for symbol in PAIRS:
-            if symbol not in exchange.markets:
-                continue
             try:
                 ticker = exchange.fetch_ticker(symbol)
                 current_price = ticker.get('last', 0.0)
@@ -362,17 +371,16 @@ def fetch_market_and_balance():
                     "trend": trend
                 })
             except Exception as ex:
-                logging.error(f"Erro ao ler par {symbol}: {ex}")
+                logging.error(f"Erro ao ler ticker/vela de {symbol}: {ex}")
 
         if market_list:
             bot_state["market_data"] = market_list
             
     except Exception as e:
-        logging.error(f"Erro na sincronização síncrona: {e}")
+        logging.error(f"Erro na sincronização de mercado: {e}")
 
 @app.route('/api/state')
 def api_state():
-    # Rota auxiliar para atualizar os dados em background via AJAX a cada 8 segundos
     if bot_state["api_key"] and bot_state["api_secret"]:
         fetch_market_and_balance()
     return jsonify({"log": bot_state["log"]})
@@ -401,6 +409,9 @@ def index():
 
 @app.route('/settings', methods=['POST'])
 def settings():
+    global global_exchange
+    global_exchange = None # Reseta a conexão para recarregar as chaves novas
+    
     key = request.form.get("api_key", "").strip()
     secret = request.form.get("api_secret", "").strip()
     
@@ -425,7 +436,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado e pronto para abrir posições reais." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado e operando em alta frequência." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -434,13 +445,10 @@ def background_loop():
             if bot_state["api_key"] and bot_state["api_secret"]:
                 fetch_market_and_balance()
                 
-                exchange = ccxt.bybit({
-                    'apiKey': bot_state["api_key"],
-                    'secret': bot_state["api_secret"],
-                    'enableRateLimit': True,
-                    'options': {'defaultType': 'linear'}
-                })
-                exchange.load_markets()
+                exchange = get_exchange()
+                if not exchange:
+                    time.sleep(3)
+                    continue
 
                 pos = bot_state["active_position"]
                 if bot_state["running"]:
@@ -542,9 +550,8 @@ def background_loop():
                                     bot_state["log"] = f"Ordem executada: {item['pair']} ({item['trend']}) a {execution_price}"
                                     break
                                 except Exception as ord_err:
-                                    # Grava o erro exato na tela para visualização imediata
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"Erro Ordem: {err_str[:80]}"
+                                    bot_state["log"] = f"Erro Ordem Bybit: {err_str[:80]}"
                                     logging.error(f"Erro Bybit Ordem: {err_str}")
 
         except Exception as e:
