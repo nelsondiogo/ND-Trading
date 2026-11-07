@@ -55,10 +55,9 @@ def get_exchange():
             exchange.load_markets()
             global_exchange = exchange
             bot_state["log"] = "Conexão OKX Demo estabelecida com sucesso."
-        except Exception as e:
-            # Blindagem absoluta contra NoneType
-            err_str = str(e) if e is not None else "Erro desconhecido"
-            bot_state["log"] = str("Erro API OKX: " + err_str[:40])
+        except Exception:
+            # Mensagem 100% estática: ZERO risco de NoneType ou erro de operador +
+            bot_state["log"] = "Erro de autenticação ou chaves inválidas na OKX."
             global_exchange = None
     return global_exchange
 
@@ -275,9 +274,8 @@ def fetch_data():
             m_list.append({"pair": sym.split('/')[0], "price": ticker.get('last', 0.0)})
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
-    except Exception as e:
-        err_str = str(e) if e is not None else "Erro sync"
-        bot_state["log"] = str("Erro dados: " + err_str[:30])
+    except Exception:
+        bot_state["log"] = "Erro de sincronização de dados de mercado."
 
 @app.route('/api/state')
 def api_state():
