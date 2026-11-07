@@ -47,15 +47,16 @@ def get_exchange():
                 'enableRateLimit': True,
                 'options': {
                     'defaultType': 'linear', # Importante: Futuros USDT lineares
-                    'adjustForTimeDifference': True
+                    'adjustForTimeDifference': True # Correção para erros de sincronização de tempo
                 }
             }
             
             # Criar instância Bybit
             exchange = ccxt.bybit(exchange_config)
             
-            # Ativar Sandbox se for Demo
+            # Ativar Sandbox se for Demo e configurar endpoints corretos
             if bot_state["is_demo"]:
+                exchange.urls['api'] = exchange.urls['test'] # Forçar endpoint de teste
                 exchange.set_sandbox_mode(True)
                 
             # Carregar mercados para validar conexão
@@ -277,6 +278,8 @@ def fetch_data():
         # Bybit v5 USDT Linear
         total = float(bal.get('total', {}).get('USDT', 0.0))
         if total > 0:
+            if bot_state["initial_balance"] == 0.0:
+                bot_state["initial_balance"] = total
             bot_state["balance"] = total
 
         # Obter preços de mercado
@@ -353,9 +356,10 @@ def background_loop():
     global global_exchange
     while True:
         try:
-            fetch_data()
+            if bot_state["running"]:
+                fetch_data()
         except Exception:
-            pass
+            global_exchange = None
         time.sleep(3) # Atualizar a cada 3 segundos
 
 if __name__ == '__main__':
