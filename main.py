@@ -23,7 +23,7 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema pronto. Insira as credenciais OKX em Ajustes."
+    "log": "Sistema pronto. Insira as credenciais em Ajustes."
 }
 
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
@@ -287,13 +287,13 @@ HTML_TEMPLATE = """
                 <h3>Configuração OKX API</h3>
                 <form action="/settings" method="POST">
                     <label style="font-size: 11px; color: #94a3b8;">API Key:</label>
-                    <input type="text" name="api_key" value="{{ api_key }}" required>
+                    <input type="text" name="api_key" value="{{ api_key }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
-                    <input type="password" name="api_secret" value="{{ api_secret }}" required>
+                    <input type="password" name="api_secret" value="{{ api_secret }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Password (Passphrase):</label>
-                    <input type="password" name="api_password" value="{{ api_password }}" required>
+                    <input type="password" name="api_password" value="{{ api_password }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
@@ -466,6 +466,7 @@ def settings():
     password = request.form.get("api_password", "").strip()
     is_demo_val = True if request.form.get("is_demo") else False
     
+    # Preserva rigorosamente os valores anteriores se os campos vierem mascarados ou vazios
     if key and key != "********":
         bot_state["api_key"] = key
     if secret and not secret.startswith("****") and secret != "********":
