@@ -14,7 +14,7 @@ bot_state = {
     "api_key": "",
     "api_secret": "",
     "is_testnet": False,
-    "leverage": 18,
+    "leverage": 21,
     "initial_balance": 0.0,
     "balance": 0.0,
     "realized_pnl": 0.0,
@@ -25,7 +25,8 @@ bot_state = {
     "log": "Sistema pronto. Insira as chaves em Ajustes."
 }
 
-PAIRS = ['ADA/USDT:USDT', 'TRX/USDT:USDT', 'DOGE/USDT:USDT', 'XRP/USDT:USDT']
+# Pares de menor valor unitário na Bybit Linear para testes ágeis
+PAIRS = ['SHIB/USDT:USDT', 'PEPE/USDT:USDT', 'FLOKI/USDT:USDT', 'BONK/USDT:USDT']
 
 TAKE_PROFIT_PCT = 0.045
 STOP_LOSS_PCT = 0.012
@@ -139,7 +140,7 @@ HTML_TEMPLATE = """
                     <strong>+{{ "%.6f"|format(initial_balance) }}</strong>
                 </div>
                 <div class="balance-box">
-                    <span>Atual (Unificada)</span>
+                    <span>Atual (Corretora)</span>
                     <strong>+{{ "%.6f"|format(balance) }}</strong>
                 </div>
             </div>
@@ -176,7 +177,7 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="card">
-                <h3>Log do Sistema (Auditoria Unificada)</h3>
+                <h3>Log do Sistema</h3>
                 <div class="log-box">{{ log }}</div>
             </div>
         </div>
@@ -186,7 +187,7 @@ HTML_TEMPLATE = """
             {% if configured %}
             <div class="balance-grid" style="margin-bottom: 10px;">
                 <div class="balance-box">
-                    <span>Saldo Unificado</span>
+                    <span>Saldo Real</span>
                     <strong>+{{ "%.4f"|format(balance) }}</strong>
                 </div>
                 <div class="balance-box">
@@ -222,9 +223,11 @@ HTML_TEMPLATE = """
                 {% set pos_count = namespace(val=0) %}
                 {% set neg_count = namespace(val=0) %}
                 {% set total_usdt = namespace(val=0.0) %}
+                {% set total_pct = namespace(val=0.0) %}
                 
                 {% for h in history %}
                     {% set total_usdt.val = total_usdt.val + h.pnl_usdt %}
+                    {% set total_pct.val = total_pct.val + h.pnl_pct %}
                     {% if h.pnl_usdt >= 0 %}
                         {% set pos_count.val = pos_count.val + 1 %}
                     {% else %}
@@ -232,8 +235,8 @@ HTML_TEMPLATE = """
                     {% endif %}
                 {% endfor %}
 
-                <p style="font-size: 12px;">Total Trades: <b>{{ total_trades }}</b> | Positivos: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Negativos: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
-                <p style="font-size: 12px;">Resultado Acumulado: <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b></p>
+                <p style="font-size: 12px;">Total Trades: <b>{{ total_trades }}</b> | Pos: <b style="color: #4ade80;">{{ pos_count.val }}</b> | Neg: <b style="color: #f87171;">{{ neg_count.val }}</b></p>
+                <p style="font-size: 12px;">Resultado Acumulado: <b style="color: {{ '#4ade80' if total_usdt.val >= 0 else '#f87171' }}">{{ "+%.4f"|format(total_usdt.val) if total_usdt.val >= 0 else "%.4f"|format(total_usdt.val) }} USDT</b> (<b style="color: {{ '#4ade80' if total_pct.val >= 0 else '#f87171' }}">{{ "+%.2f"|format(total_pct.val) if total_pct.val >= 0 else "%.2f"|format(total_pct.val) }}%</b>)</p>
             </div>
 
             <div class="card">
@@ -246,8 +249,11 @@ HTML_TEMPLATE = """
                     </div>
                     <div style="text-align: right;">
                         <span style="color: {{ '#4ade80' if h.pnl_usdt >= 0 else '#f87171' }}; font-weight: bold; font-size: 12px;">
-                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }}
-                        </span>
+                            {{ "+%.4f"|format(h.pnl_usdt) if h.pnl_usdt >= 0 else "%.4f"|format(h.pnl_usdt) }} USDT
+                        </span><br>
+                        <small style="color: {{ '#4ade80' if h.pnl_pct >= 0 else '#f87171' }}; font-size: 10px; font-weight: bold;">
+                            {{ "+%.2f"|format(h.pnl_pct) if h.pnl_pct >= 0 else "%.2f"|format(h.pnl_pct) }}%
+                        </small>
                     </div>
                 </div>
                 {% else %}
@@ -324,31 +330,28 @@ def fetch_market_and_balance():
         bot_state["log"] = "Erro: Falha na instância CCXT."
         return
 
-    # Leitura cirúrgica da Conta Unificada (UTA) da Bybit V5
+    # Leitura direta e exata do saldo real na corretora (Conta Unificada / Linear V5)
     try:
         balance_data = exchange.fetch_balance({'type': 'unified'})
         total = 0.0
         
-        # Tenta extrair o free ou total de USDT da conta unificada
-        if 'free' in balance_data and 'USDT' in balance_data['free'] and balance_data['free']['USDT'] is not None:
-            total = float(balance_data['free']['USDT'])
-        elif 'total' in balance_data and 'USDT' in balance_data['total'] and balance_data['total']['USDT'] is not None:
-            total = float(balance_data['total']['USDT'])
-        elif 'info' in balance_data and isinstance(balance_data['info'], dict):
-            # Leitura profunda do dicionário nativo V5 da Bybit se o CCXT vier mascarado
+        if 'info' in balance_data and isinstance(balance_data['info'], dict):
             res_list = balance_data['info'].get('result', {}).get('list', [])
             if res_list:
                 for coin in res_list[0].get('coin', []):
                     if coin.get('coin') == 'USDT':
-                        total = float(coin.get('availableToWithdraw', 0.0) or coin.get('walletBalance', 0.0))
+                        total = float(coin.get('walletBalance', 0.0) or coin.get('equity', 0.0) or coin.get('availableToWithdraw', 0.0))
                         break
+        
+        if total == 0.0 and 'total' in balance_data and 'USDT' in balance_data['total']:
+            total = float(balance_data['total']['USDT'] or 0.0)
 
         if total > 0:
             if bot_state["initial_balance"] == 0.0:
                 bot_state["initial_balance"] = total
             bot_state["balance"] = total
     except Exception as e:
-        logging.error(f"Erro a ler saldo da Conta Unificada Bybit: {e}")
+        logging.error(f"Erro a ler saldo real da corretora: {e}")
 
     market_list = []
     for symbol in PAIRS:
@@ -429,12 +432,12 @@ def settings():
         bot_state["api_secret"] = secret
         
     try:
-        bot_state["leverage"] = int(request.form.get("leverage", 18))
+        bot_state["leverage"] = int(request.form.get("leverage", 21))
     except ValueError:
         pass
     
     fetch_market_and_balance()
-    bot_state["log"] = "Definições guardadas e Conta Unificada mapeada."
+    bot_state["log"] = "Definições guardadas."
     return redirect(url_for('index'))
 
 @app.route('/toggle', methods=['POST'])
@@ -444,7 +447,7 @@ def toggle():
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "Robô ativado na Conta Unificada." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = "Robô ativado." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
 def background_loop():
@@ -464,10 +467,6 @@ def background_loop():
                                 side = 'buy' if item["trend"] == 'LONG' else 'sell'
                                 try:
                                     notional = bot_state["balance"] * bot_state["leverage"] * 0.95
-                                    if notional < 5.0:
-                                        bot_state["log"] = f"BLOQUEIO BYBIT: Poder nocional ({notional:.2f} USDT) abaixo do mínimo de contrato (~5 USDT)."
-                                        break
-
                                     raw_amount = notional / item["price"]
                                     amount = float(exchange.amount_to_precision(symbol, raw_amount))
                                     
@@ -484,12 +483,12 @@ def background_loop():
                                         "pnl": 0.0,
                                         "trailing_active": False
                                     }
-                                    bot_state["log"] = f"Ordem aberta na UTA: {item['pair']} ({item['trend']})"
+                                    bot_state["log"] = f"Ordem aberta: {item['pair']} ({item['trend']})"
                                     break
                                 except Exception as ord_err:
                                     err_str = str(ord_err)
-                                    bot_state["log"] = f"REJEITADO PELA BYBIT UTA: {err_str[:70]}"
-                                    logging.error(f"Erro ao abrir ordem na UTA: {err_str}")
+                                    bot_state["log"] = f"REJEITADO PELA BYBIT: {err_str[:70]}"
+                                    logging.error(f"Erro ao abrir ordem: {err_str}")
         except Exception as e:
             logging.error(f"Erro no loop principal: {e}")
             global_exchange = None
