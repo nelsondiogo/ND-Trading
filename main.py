@@ -6,61 +6,70 @@ from flask import Flask, render_template_string, request, redirect, url_for, jso
 
 app = Flask(__name__)
 
+# Estado inicial do robô Bybit
 bot_state = {
     "running": False,
     "api_key": "",
     "api_secret": "",
-    "is_demo": True,
+    "is_demo": True, # Padrão: Ativar Testnet (Modo Demonstração)
     "leverage": 21,
-    "initial_balance": 1000.0,  # Valor padrão visível para testes
-    "balance": 1000.0,
+    "initial_balance": 0.0,
+    "balance": 0.0,
     "realized_pnl": 0.0,
     "active_position": None,
-    "market_data": [
-        {"pair": "ADA", "price": "0.4500"},
-        {"pair": "XRP", "price": "0.5500"},
-        {"pair": "DOGE", "price": "0.1200"},
-        {"pair": "TRX", "price": "0.1100"}
-    ],
+    "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "Sistema Bybit pronto. Configure as chaves em Ajustes."
+    "log": "Sistema Bybit pronto. Insira as credenciais em Ajustes."
 }
 
+# Pares de USDT Lineares (Futuros) da Bybit
 PAIRS = ['ADA/USDT:USDT', 'XRP/USDT:USDT', 'DOGE/USDT:USDT', 'TRX/USDT:USDT']
+
+# Variável global para a instância da exchange Bybit
 global_exchange = None
 
+# Função limpa para obter a instância da exchange Bybit
 def get_exchange():
     global global_exchange
-    key = str(bot_state["api_key"] or "").strip()
-    secret = str(bot_state["api_secret"] or "").strip()
+    key = bot_state["api_key"].strip()
+    secret = bot_state["api_secret"].strip()
 
+    # Se não houver chaves, não tentar conexão
     if not key or not secret:
         return None
 
     if global_exchange is None:
         try:
-            exchange = ccxt.bybit({
+            exchange_config = {
                 'apiKey': key,
                 'secret': secret,
                 'enableRateLimit': True,
                 'options': {
-                    'defaultType': 'linear',
+                    'defaultType': 'linear', # Importante: Futuros USDT lineares
                     'adjustForTimeDifference': True
                 }
-            })
+            }
             
+            # Criar instância Bybit
+            exchange = ccxt.bybit(exchange_config)
+            
+            # Ativar Sandbox se for Demo
             if bot_state["is_demo"]:
                 exchange.set_sandbox_mode(True)
                 
+            # Carregar mercados para validar conexão
             exchange.load_markets()
             global_exchange = exchange
             bot_state["log"] = "Conexão Bybit estabelecida com sucesso."
-        except Exception as e:
-            bot_state["log"] = "Erro de conexão Bybit. Verifique as chaves."
+        except Exception:
+            # Mensagem fixa e estática em caso de erro
+            bot_state["log"] = "Erro de autenticação Bybit. Verifique as chaves e o modo Testnet."
             global_exchange = None
+            
     return global_exchange
 
+# Template HTML limpo e simplificado
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="pt">
@@ -102,6 +111,7 @@ HTML_TEMPLATE = """
         p { margin: 6px 0; font-size: 13px; }
     </style>
     <script>
+        // Função para trocar de aba
         function showTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
             document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
@@ -109,11 +119,13 @@ HTML_TEMPLATE = """
             if(document.getElementById('btn-' + tabId)) {
                 document.getElementById('btn-' + tabId).classList.add('active');
             }
-            localStorage.setItem('activeTab', tabId);
+            // Guardar aba ativa
+            localStorage.setItem('activeBybitTab', tabId);
         }
 
+        // Carregar aba ativa e atualizar relógio
         window.onload = function() {
-            let savedTab = localStorage.getItem('activeTab');
+            let savedTab = localStorage.getItem('activeBybitTab');
             if (savedTab && document.getElementById(savedTab)) {
                 showTab(savedTab);
             }
@@ -129,7 +141,7 @@ HTML_TEMPLATE = """
                             let clock = document.querySelector('.clock');
                             if(clock) clock.innerText = "Sincronizado: " + data.last_update;
                         }
-                    }).catch(err => {});
+                    });
             }, 2000);
         }
     </script>
@@ -157,7 +169,7 @@ HTML_TEMPLATE = """
                 {% if active_position %}
                     <p>Ativo: <b>{{ active_position.pair }}</b></p>
                 {% else %}
-                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Em Stand-by (Aguardando Sinal).</p>
+                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Aguardando chaves Bybit válidas.</p>
                 {% endif %}
             </div>
 
@@ -187,16 +199,18 @@ HTML_TEMPLATE = """
         <div id="mercado" class="tab-content">
             <div class="card">
                 <h3>Mercado em Tempo Real</h3>
-                {% for item in market_data %}
-                <div class="market-item">
-                    <div>
-                        <b>{{ item.pair }}</b><br>
-                        <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
+                {% if market_data %}
+                    {% for item in market_data %}
+                    <div class="market-item">
+                        <div>
+                            <b>{{ item.pair }}</b><br>
+                            <span style="font-size: 12px; color: #cbd5e1;">{{ item.price }}</span>
+                        </div>
                     </div>
-                </div>
+                    {% endfor %}
                 {% else %}
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">A carregar mercado...</p>
-                {% endfor %}
+                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">Sincronize as chaves Bybit para ver dados de mercado.</p>
+                {% endif %}
             </div>
         </div>
 
@@ -204,7 +218,7 @@ HTML_TEMPLATE = """
         <div id="historico" class="tab-content">
             <div class="card">
                 <h3>Registo de Operações</h3>
-                <p style="text-align: center; color: #94a3b8; font-size: 12px;">Nenhum registo recente.</p>
+                <p style="text-align: center; color: #94a3b8; font-size: 12px;">Aguardando chaves válidas e operações.</p>
             </div>
         </div>
 
@@ -217,7 +231,7 @@ HTML_TEMPLATE = """
                     <input type="text" name="api_key" value="{{ api_key }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">API Secret:</label>
-                    <input type="text" name="api_secret" value="{{ api_secret }}">
+                    <input type="password" name="api_secret" value="{{ api_secret }}">
                     
                     <label style="font-size: 11px; color: #94a3b8;">Alavancagem:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
@@ -252,18 +266,20 @@ HTML_TEMPLATE = """
 </html>
 """
 
+# Função para atualizar dados da Bybit em background
 def fetch_data():
     ex = get_exchange()
     if not ex:
         return
     try:
+        # Obter saldo da conta unificada/futuros lineares
         bal = ex.fetch_balance()
-        total = float(bal.get('total', {}).get('USDT', 0.0) or 0.0)
+        # Bybit v5 USDT Linear
+        total = float(bal.get('total', {}).get('USDT', 0.0))
         if total > 0:
-            if float(bot_state["initial_balance"]) == 1000.0:
-                bot_state["initial_balance"] = total
             bot_state["balance"] = total
 
+        # Obter preços de mercado
         m_list = []
         for sym in PAIRS:
             ticker = ex.fetch_ticker(sym)
@@ -271,78 +287,79 @@ def fetch_data():
         bot_state["market_data"] = m_list
         bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
     except Exception:
-        bot_state["log"] = "Erro de sincronização com a Bybit."
+        # Silenciar erros de rede no background para evitar poluição de logs
+        pass
 
+# Rota API limpa para o estado
 @app.route('/api/state')
 def api_state():
     return jsonify({
-        "log": str(bot_state["log"] or ""),
-        "last_update": str(bot_state["last_update"] or "")
+        "log": str(bot_state["log"]),
+        "last_update": str(bot_state["last_update"])
     })
 
+# Rota principal (Dashboard)
 @app.route('/')
 def index():
-    if bot_state["api_key"]:
-        fetch_data()
     return render_template_string(
         HTML_TEMPLATE,
         running=bot_state["running"],
-        initial_balance=float(bot_state["initial_balance"] or 1000.0),
-        balance=float(bot_state["balance"] or 1000.0),
-        realized_pnl=float(bot_state["realized_pnl"] or 0.0),
+        initial_balance=float(bot_state["initial_balance"]),
+        balance=float(bot_state["balance"]),
+        realized_pnl=float(bot_state["realized_pnl"]),
         active_position=bot_state["active_position"],
         market_data=bot_state["market_data"],
         history=bot_state["history"],
-        api_key=str(bot_state["api_key"] or ""),
-        api_secret=str(bot_state["api_secret"] or ""),
-        leverage=int(bot_state["leverage"] or 21),
+        api_key=str(bot_state["api_key"]),
+        api_secret=str(bot_state["api_secret"]),
+        leverage=int(bot_state["leverage"]),
         is_demo=bool(bot_state["is_demo"]),
-        last_update=str(bot_state["last_update"] or "Aguardando..."),
-        log=str(bot_state["log"] or "Sistema pronto.")
+        last_update=str(bot_state["last_update"]),
+        log=str(bot_state["log"])
     )
 
+# Rota para salvar definições
 @app.route('/settings', methods=['POST'])
 def settings():
     global global_exchange
-    global_exchange = None
+    global_exchange = None  # Resetar instância para forçar nova conexão
     
-    bot_state["api_key"] = str(request.form.get("api_key") or "").strip()
-    bot_state["api_secret"] = str(request.form.get("api_secret") or "").strip()
+    bot_state["api_key"] = str(request.form.get("api_key")).strip()
+    bot_state["api_secret"] = str(request.form.get("api_secret")).strip()
     bot_state["is_demo"] = True if request.form.get("is_demo") else False
     
     try:
-        bot_state["leverage"] = int(request.form.get("leverage") or 21)
+        bot_state["leverage"] = int(request.form.get("leverage"))
     except:
         bot_state["leverage"] = 21
     
-    bot_state["log"] = "Definições guardadas. A ligar à Bybit..."
+    bot_state["log"] = "Definições Bybit guardadas. A ligar..."
     return redirect(url_for('index'))
 
+# Rota para iniciar/parar
 @app.route('/toggle', methods=['POST'])
 def toggle():
-    key = str(bot_state["api_key"] or "").strip()
-    secret = str(bot_state["api_secret"] or "").strip()
-
-    if not key or not secret:
+    if not bot_state["api_key"] or not bot_state["api_secret"]:
         bot_state["log"] = "Erro: Insira as chaves Bybit em Ajustes!"
         return redirect(url_for('index'))
     
     bot_state["running"] = not bot_state["running"]
     mode_str = "TESTNET" if bot_state["is_demo"] else "REAL"
-    bot_state["log"] = f"Robô ativado na Bybit ({mode_str})." if bot_state["running"] else "Robô parado."
+    bot_state["log"] = f"Robô Bybit ativado ({mode_str})." if bot_state["running"] else "Robô parado."
     return redirect(url_for('index'))
 
+# Thread de background limpa
 def background_loop():
     global global_exchange
     while True:
         try:
-            if bot_state["running"]:
-                fetch_data()
+            fetch_data()
         except Exception:
-            global_exchange = None
-        time.sleep(3)
+            pass
+        time.sleep(3) # Atualizar a cada 3 segundos
 
 if __name__ == '__main__':
     t = threading.Thread(target=background_loop, daemon=True)
     t.start()
+    # Executar Flask
     app.run(host='0.0.0.0', port=5000)
