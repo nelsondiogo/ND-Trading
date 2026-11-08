@@ -24,7 +24,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 import config as C
-from exchange_management import MODES, test_connection
+from exchange_management import MODES, diagnose
 from trading import push_log, supervisor
 
 app = Flask(__name__)
@@ -47,6 +47,12 @@ bot_state = {
     "leverage": int(C.LEVERAGE_DEFAULT),
     "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
     "retry": False,
+    "gen": 0,                      # geração do motor (o vigia pode substituir um motor preso)
+    "heartbeat": 0.0,
+    "conn_step": "",
+    "conn_since": 0.0,
+    "diag": [],
+    "diag_running": False,
     "conn": "sem_chaves",          # sem_chaves | a_ligar | ligado | erro
     "conn_msg": "",
     "initial_balance": 0.0,
@@ -216,6 +222,7 @@ def _fail(ip):
 def login_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
+        ensure_bot()
         if not has_password() or not session.get("ok"):
             if request.path.startswith("/api/"):
                 return jsonify({"error": "login"}), 401
@@ -328,6 +335,7 @@ def logout():
 
 @app.route("/health")
 def health():
+    ensure_bot()
     return "ok"          # público e sem dados: serve para pings (UptimeRobot) e health check da Render
 
 
@@ -404,6 +412,11 @@ def snapshot(tab=""):
         "events": list(s["events"])[:8],
         "last_update": s["last_update"],
         "log": s["log"],
+        "motor_ok": time.time() - s["heartbeat"] < 8,
+        "conn_step": s["conn_step"],
+        "conn_secs": int(time.time() - s["conn_since"]) if s["conn"] == "a_ligar" and s["conn_since"] else 0,
+        "diag": list(s["diag"]),
+        "diag_running": s["diag_running"],
     }
     if tab == "mercado":
         d["market_data"] = list(s["market_data"])
@@ -485,9 +498,17 @@ def settings():
     s["retry"] = True
 
     if f.get("action") == "test":
-        ok, res = asyncio.run(test_connection(dict(s)))
-        msg = ("✔ " if ok else "✖ ") + res
+        start_diag()
+        msg += " A testar a ligação (resultado no Dashboard)..."
     push_log(s, msg)
+    return redirect(url_for("index"))
+
+
+@app.route("/diag", methods=["POST"])
+@login_required
+def diag():
+    if start_diag():
+        push_log(bot_state, "A diagnosticar a ligação à Bybit...")
     return redirect(url_for("index"))
 
 
@@ -509,24 +530,58 @@ def toggle():
 
 
 # ============================ ROBÔ (thread própria) ============================
-def _bot_thread():
-    while True:
+_bot = {"thread": None, "pid": None}
+_bot_lock = threading.Lock()
+
+
+def _bot_thread(gen):
+    while bot_state.get("gen") == gen:
         try:
             asyncio.run(supervisor(bot_state))
-        except Exception as e:                           # nunca deixa o robô morrer em silêncio
+        except BaseException as e:                       # nunca deixa o motor morrer em silêncio
             bot_state["running"] = False
-            push_log(bot_state, f"Erro interno: {str(e)[:100]}")
+            push_log(bot_state, f"Erro interno do motor: {str(e)[:100]}")
             time.sleep(5)
 
 
-def start_background():
-    if getattr(app, "_bot_started", False):
-        return
-    app._bot_started = True
-    threading.Thread(target=_bot_thread, name="nd-bot", daemon=True).start()
+def ensure_bot():
+    """Garante um motor vivo NESTE processo (também depois de um fork do gunicorn) e substitui um motor preso."""
+    with _bot_lock:
+        t = _bot["thread"]
+        alive = t is not None and t.is_alive() and _bot["pid"] == os.getpid()
+        stale = alive and bot_state["heartbeat"] > 0 and time.time() - bot_state["heartbeat"] > 30
+        if alive and not stale:
+            return
+        bot_state["gen"] += 1
+        bot_state["heartbeat"] = time.time()
+        gen = bot_state["gen"]
+        t = threading.Thread(target=_bot_thread, args=(gen,), name=f"nd-bot-{gen}", daemon=True)
+        t.start()
+        _bot["thread"], _bot["pid"] = t, os.getpid()
+        push_log(bot_state, "Motor do robô sem resposta: reiniciado." if stale else "Motor do robô iniciado.")
 
 
-start_background()
+def _diag_job(st):
+    try:
+        ok, steps = asyncio.run(diagnose(st))
+    except BaseException as e:
+        ok, steps = False, [f"✖ Erro no diagnóstico: {str(e)[:100]}"]
+    bot_state["diag"] = steps
+    push_log(bot_state, ("✔ " if ok else "✖ ") + steps[-1].lstrip("✔✖• ").strip())
+    bot_state["diag_running"] = False
+
+
+def start_diag():
+    """Diagnóstico da ligação em segundo plano (não bloqueia o painel)."""
+    if bot_state["diag_running"]:
+        return False
+    bot_state["diag_running"] = True
+    bot_state["diag"] = ["A diagnosticar a ligação..."]
+    threading.Thread(target=_diag_job, args=(dict(bot_state),), daemon=True).start()
+    return True
+
+
+ensure_bot()
 
 
 HTML_TEMPLATE = """
@@ -579,6 +634,7 @@ HTML_TEMPLATE = """
         .c-ligado { background: #14532d; color: #4ade80; } .c-a_ligar { background: #78350f; color: #fbbf24; }
         .c-erro { background: #7f1d1d; color: #fecaca; } .c-sem_chaves { background: #1e293b; color: #94a3b8; }
         .errbox { margin-top: 10px; background: #2a1212; border-left: 3px solid #ef4444; color: #fecaca; padding: 10px; border-radius: 4px; font-size: 12px; line-height: 1.5; }
+        .diag { margin-top: 10px; background: #0b0f19; border-left: 3px solid #38bdf8; color: #cbd5e1; padding: 10px; border-radius: 4px; font-size: 11px; line-height: 1.6; white-space: pre-line; word-break: break-word; }
         .warnbox { margin-top: 8px; background: #2a2010; border-left: 3px solid #f59e0b; color: #fde68a; padding: 8px 10px; border-radius: 4px; font-size: 11px; line-height: 1.5; }
         p { margin: 4px 0; font-size: 13px; }
         .hint { font-size: 11px; color: #64748b; margin: -4px 0 8px 0; line-height: 1.5; }
@@ -636,6 +692,12 @@ HTML_TEMPLATE = """
             cn.className = 'conn c-' + d.conn;
             var eb = document.getElementById('conn-msg');
             if (d.conn === 'erro' && d.conn_msg) { eb.style.display = 'block'; eb.innerText = d.conn_msg; } else { eb.style.display = 'none'; }
+            var cs = document.getElementById('conn-step');
+            if (d.conn === 'a_ligar') { cs.style.display = 'block'; cs.innerText = 'A ligar: ' + (d.conn_step || 'a iniciar') + ' (' + d.conn_secs + 's)'; } else { cs.style.display = 'none'; }
+            setText('motor', 'Motor do robô: ' + (d.motor_ok ? 'ativo' : 'a reiniciar...'));
+            var dg = document.getElementById('diag');
+            if (d.diag && d.diag.length) { dg.style.display = 'block'; dg.innerText = d.diag.join(String.fromCharCode(10)); } else { dg.style.display = 'none'; }
+            document.getElementById('diag-btn').disabled = !!d.diag_running;
 
             var st = document.getElementById('status');
             st.innerText = d.running ? 'OPERANDO' : 'PARADO';
@@ -824,6 +886,12 @@ HTML_TEMPLATE = """
                 <span class="conn c-sem_chaves" id="conn">...</span>
                 <span class="mode-tag" id="mode-tag" style="margin-left:6px">{{ modes[mode] }}</span>
                 <div class="errbox" id="conn-msg" style="display:none"></div>
+                <p class="sub" id="conn-step" style="display:none;margin-top:8px"></p>
+                <p class="sub" id="motor" style="margin-top:6px"></p>
+                <div class="diag" id="diag" style="display:none"></div>
+                <form action="/diag" method="POST" style="margin-top:10px">
+                    <button type="submit" class="btn-save btn-test" id="diag-btn">Diagnóstico da ligação</button>
+                </form>
             </div>
 
             <div class="card" id="pos-box"><p class="muted">Nenhuma posição ativa no momento.</p></div>
@@ -905,7 +973,7 @@ HTML_TEMPLATE = """
                     <p class="hint">É a <b>margem</b>: o valor do teu saldo que entra em cada operação. A posição é multiplicada pela alavancagem (margem × alavancagem). Ex.: 5 USDT × 18x = 90 USDT. Se o saldo livre for menor, o robô usa no máximo 90% dele.</p>
 
                     <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
-                    <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação à Bybit</button>
+                    <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação (resultado no Dashboard)</button>
                 </form>
                 <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta.
                 {% if persistent %}As chaves ficam guardadas no servidor, cifradas com a palavra-passe do painel.
