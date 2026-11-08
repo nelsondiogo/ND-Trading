@@ -45,6 +45,28 @@ def create_exchange(state):
     return ex
 
 
+def read_usdt(b):
+    """Lê (saldo total, saldo livre) em USDT de um fetch_balance, tanto em conta Unified como Clássica."""
+    total = float((b.get("total") or {}).get("USDT") or 0)
+    free = float((b.get("free") or {}).get("USDT") or 0)
+    try:
+        acc = b["info"]["result"]["list"][0]
+    except (KeyError, IndexError, TypeError):
+        acc = None
+    if isinstance(acc, dict):
+        if total <= 0:
+            total = float(acc.get("totalEquity") or 0)
+        if free <= 0:
+            free = float(acc.get("totalAvailableBalance") or 0)
+    if free <= 0 < total:
+        free = total                       # conta sem posições abertas
+    return total, free
+
+
+ZERO_HINT = ("O saldo de trading é 0. Confirma que o USDT está na conta Unified Trading "
+             "(na Bybit: Ativos > Transferir, de Funding para Unified Trading).")
+
+
 async def test_connection(state):
     """Testa a ligação sem iniciar o robô. Devolve (ok, mensagem)."""
     ex = None
@@ -52,8 +74,9 @@ async def test_connection(state):
         ex = create_exchange(state)
         await ex.load_markets()                        # público: testa se a Bybit está acessível
         bal = await ex.fetch_balance()                 # privado: testa a chave, o secret e as permissões
-        total = float((bal.get("total") or {}).get("USDT") or 0)
-        return True, f"Ligação OK ({mode_label(state.get('mode'))}). Saldo: {total:.2f} USDT."
+        total, free = read_usdt(bal)
+        extra = (" " + ZERO_HINT) if total <= 0 else ""
+        return True, f"Ligação OK ({mode_label(state.get('mode'))}). Saldo: {total:.4f} USDT (livre {free:.4f}).{extra}"
     except Exception as e:
         return False, explain_error(e, state.get("mode"))[0]
     finally:
