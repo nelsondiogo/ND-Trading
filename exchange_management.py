@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """ND-SCALPING — ligação à Bybit (ccxt assíncrono) e tradução dos erros para mensagens claras."""
+import asyncio
 import re
+import socket
+import time
 
 import ccxt.async_support as ccxt
 from ccxt.base import errors as E
@@ -33,7 +36,12 @@ def create_exchange(state):
             "adjustForTimeDifference": True,
             "recvWindow": 10000,
         },
+        "timeout": 15000,                 # 15 s por pedido: nunca fica pendurado
     })
+    # Não pede a lista de moedas (pedido privado extra que falha com chaves sem permissão de carteira
+    # e na conta Demo): para operar só são precisos os contratos e o saldo.
+    ex.has = dict(ex.has)
+    ex.has["fetchCurrencies"] = False
     mode = state.get("mode", "testnet")
     if mode == "testnet":
         ex.set_sandbox_mode(True)                      # testnet.bybit.com
@@ -67,18 +75,82 @@ ZERO_HINT = ("O saldo de trading é 0. Confirma que o USDT está na conta Unifie
              "(na Bybit: Ativos > Transferir, de Funding para Unified Trading).")
 
 
-async def test_connection(state):
-    """Testa a ligação sem iniciar o robô. Devolve (ok, mensagem)."""
+HOSTS = {"real": "api.bybit.com", "demo": "api-demo.bybit.com", "testnet": "api-testnet.bybit.com"}
+
+
+async def _dns(host):
+    loop = asyncio.get_running_loop()
+    infos = await asyncio.wait_for(loop.getaddrinfo(host, 443, type=socket.SOCK_STREAM), 8)
+    return infos[0][4][0]
+
+
+async def _http_get(url, timeout=10):
+    import aiohttp
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as s:
+        async with s.get(url) as r:
+            return r.status, (await r.text())[:300]
+
+
+async def diagnose(state):
+    """Testa a ligação passo a passo, sem iniciar o robô. Devolve (ok, [linhas])."""
+    steps = []
+
+    def add(ok, text):
+        steps.append(("✔ " if ok else "✖ ") + text)
+
+    mode = state.get("mode", "testnet")
+    host = HOSTS.get(mode, "api.bybit.com")
+    add_ms = lambda t0: int((time.time() - t0) * 1000)
+
+    t0 = time.time()
+    try:
+        add(True, f"DNS {host} → {await _dns(host)} ({add_ms(t0)} ms)")
+    except Exception as e:
+        add(False, f"DNS de {host} falhou ({type(e).__name__}): o servidor não resolve o endereço da Bybit.")
+        return False, steps
+
+    try:
+        _, body = await _http_get("https://api.ipify.org", 6)
+        steps.append(f"• IP de saída do servidor: {body.strip()}")
+    except Exception:
+        steps.append("• IP de saída do servidor: indisponível")
+
+    t0 = time.time()
+    try:
+        status, body = await _http_get(f"https://{host}/v5/market/time", 10)
+    except Exception as e:
+        add(False, f"Sem resposta de {host} ({type(e).__name__}, {add_ms(t0)} ms). Verifica a Region da Render.")
+        return False, steps
+    if status == 200:
+        add(True, f"{host} acessível (HTTP 200, {add_ms(t0)} ms)")
+    elif status == 403 or "cloudfront" in body.lower():
+        add(False, "A Bybit bloqueou este servidor (HTTP 403). A Render está numa região bloqueada (EUA): "
+                   "cria o serviço na Region Frankfurt ou Singapore.")
+        return False, steps
+    else:
+        add(False, f"{host} respondeu HTTP {status}: {body[:80]}")
+        return False, steps
+
     ex = None
     try:
         ex = create_exchange(state)
-        await ex.load_markets()                        # público: testa se a Bybit está acessível
-        bal = await ex.fetch_balance()                 # privado: testa a chave, o secret e as permissões
-        total, free = read_usdt(bal)
-        extra = (" " + ZERO_HINT) if total <= 0 else ""
-        return True, f"Ligação OK ({mode_label(state.get('mode'))}). Saldo: {total:.4f} USDT (livre {free:.4f}).{extra}"
+    except ValueError as e:
+        add(False, str(e))
+        return False, steps
+    try:
+        t0 = time.time()
+        await asyncio.wait_for(ex.load_markets(), 45)
+        n = sum(1 for m in ex.markets.values() if m.get("swap") and m.get("linear") and m.get("quote") == "USDT")
+        add(True, f"Mercados carregados: {n} contratos USDT ({add_ms(t0)} ms)")
+        t0 = time.time()
+        total, free = read_usdt(await asyncio.wait_for(ex.fetch_balance(), 25))
+        add(True, f"Chave aceite ({mode_label(mode)}). Saldo {total:.4f} USDT (livre {free:.4f}) ({add_ms(t0)} ms)")
+        if total <= 0:
+            steps.append("• " + ZERO_HINT)
+        return True, steps
     except Exception as e:
-        return False, explain_error(e, state.get("mode"))[0]
+        add(False, explain_error(e, mode)[0])
+        return False, steps
     finally:
         if ex is not None:
             try:
@@ -96,6 +168,9 @@ def explain_error(e, mode="testnet"):
 
     if isinstance(e, ValueError):
         return s, True
+    if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+        return ("A Bybit não respondeu a tempo. Confirma que o serviço da Render está na Region Frankfurt "
+                "ou Singapore (não nos EUA) e usa o botão Diagnóstico."), False
     if "10010" in s or "unmatched ip" in low:
         return ("A chave tem restrição de IP. Cria a chave sem restrição de IP "
                 "(o IP da Render muda) e cola-a de novo em Ajustes."), True
