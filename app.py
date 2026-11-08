@@ -21,7 +21,7 @@ bot_state = {
     "market_data": [],
     "history": [],
     "last_update": "Aguardando...",
-    "log": "ND-SCALPING pronto. Insira as credenciais em Ajustes."
+    "log": "ND-SCALPING (Sexta 06:00) pronto. Insira as credenciais em Ajustes."
 }
 
 HTML_TEMPLATE = """
