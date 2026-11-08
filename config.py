@@ -2,9 +2,9 @@
 """
 ND-SCALPING — configuração fixa.
 
-Qualquer valor pode ser sobreposto por uma variável de ambiente na Render
-(Environment) sem mexer no código. A chave da API NÃO fica aqui: é inserida no
-separador "Ajustes" do painel (ou em BYBIT_API_KEY / BYBIT_API_SECRET na Render).
+Valores técnicos (não são segredos) podem ser sobrepostos por variáveis de ambiente, mas
+nenhuma é necessária. A palavra-passe do painel e as chaves da Bybit NÃO ficam aqui nem na
+Render: são inseridas no próprio painel (1.º acesso e separador "Ajustes").
 """
 import os
 
@@ -36,7 +36,7 @@ PAIRS = [f"{b}/USDT:USDT" for b in PAIR_BASES]
 # Editáveis depois no separador "Ajustes" do painel.
 LEVERAGE_DEFAULT = _env("LEVERAGE", 17)                  # alavancagem
 MARGIN_DEFAULT_USDT = _env("MARGIN_PER_TRADE_USDT", 20.0)  # margem por operação (USDT)
-MODE_DEFAULT = os.getenv("BYBIT_MODE", "testnet")        # testnet | demo | real
+MODE_DEFAULT = "testnet"                                # testnet | demo | real (muda em Ajustes)
 MARGIN_MODE = "cross"                                    # margem cruzada
 ALLOW_LONG = _env("ALLOW_LONG", 1) == 1
 ALLOW_SHORT = _env("ALLOW_SHORT", 1) == 1
