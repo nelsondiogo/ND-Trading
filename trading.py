@@ -2,10 +2,11 @@
 """
 ND-SCALPING — motor de scalping (LONG e SHORT) para futuros perpétuos USDT da Bybit.
 
-- Scanner contínuo em segundo plano (moedas abaixo de 1 USDT, lista em config.py).
-- SL e TP ficam na própria Bybit (a posição continua protegida se o servidor cair).
-- A partir do gatilho, STOP RÍGIDO no cume do melhor preço: qualquer recuo fecha de imediato.
-- Corre numa thread própria (ver app.py); comunica com o painel através do dicionário `state`.
+Duas camadas:
+  1. SINCRONIZADOR (sempre ligado quando há chaves): lê saldo, preços ao vivo e sinais de todos os pares.
+  2. ROBÔ (botão INICIAR): abre e gere operações. SL e TP ficam na Bybit; a partir do gatilho,
+     STOP RÍGIDO no cume do melhor preço (qualquer recuo fecha de imediato).
+Corre numa thread própria (ver app.py) e comunica com o painel através do dicionário `state`.
 """
 import asyncio
 import time
@@ -13,13 +14,17 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import config as C
-from exchange_management import create_exchange, explain_error, mode_label
+from exchange_management import create_exchange, explain_error, mode_label, read_usdt, ZERO_HINT
 
 TZ = timezone(timedelta(hours=C.TZ_OFFSET_H))
 
 
-def hms():
-    return datetime.now(TZ).strftime("%H:%M:%S")
+def hms(ts=None):
+    return datetime.fromtimestamp(ts or time.time(), TZ).strftime("%H:%M:%S")
+
+
+def stamp(ts):
+    return datetime.fromtimestamp(ts, TZ).strftime("%d/%m %H:%M:%S")
 
 
 def fmt(x):
@@ -36,8 +41,8 @@ def push_log(state, msg):
 
 def analyze(c):
     """Analisa velas de 1 min [ts, o, h, l, c, v] (a última está em formação).
-    Devolve dict: side ('long'|'short'|None), score, move (amplitude %), vr (volume x média), status."""
-    res = {"side": None, "score": 0.0, "move": 0.0, "vr": 0.0, "status": "SEM DADOS"}
+    Devolve dict: trend (LONG|SHORT|NEUTRO), side (sinal pronto ou None), score, move, vr, chg1m, status."""
+    res = {"side": None, "trend": "—", "score": 0.0, "move": 0.0, "vr": 0.0, "chg1m": 0.0, "status": "SEM DADOS"}
     if not c or len(c) < 24:
         return res
     cur, prev = c[-1], c[-2]
@@ -45,25 +50,28 @@ def analyze(c):
     res["move"] = max((k[2] - k[3]) / k[3] * 100 for k in (cur, prev))
     avg = sum(k[5] for k in hist) / len(hist)
     res["vr"] = prev[5] / avg if avg > 0 else 0.0
-    res["status"] = "NEUTRO"
+    res["chg1m"] = (cur[4] - cur[1]) / cur[1] * 100 if cur[1] else 0.0
 
-    if res["move"] > C.MAX_1M_MOVE_PCT:                 # anti-saturação (exaustão/topo)
+    c3, c2, c1 = c[-3][4], prev[4], cur[4]                 # três fechos seguidos
+    trend = "LONG" if c1 > c2 > c3 else ("SHORT" if c1 < c2 < c3 else "NEUTRO")
+    res["trend"] = res["status"] = trend
+    if trend == "NEUTRO":
+        return res
+    if res["move"] > C.MAX_1M_MOVE_PCT:                    # anti-saturação (exaustão/topo)
         res["status"] = "SATURADO"
         return res
-
-    c3, c2, c1 = c[-3][4], prev[4], cur[4]              # três fechos seguidos
-    if c1 > c2 > c3 and C.ALLOW_LONG:
-        side = "long"
-    elif c1 < c2 < c3 and C.ALLOW_SHORT:
-        side = "short"
-    else:
+    if (trend == "LONG" and not C.ALLOW_LONG) or (trend == "SHORT" and not C.ALLOW_SHORT):
+        res["status"] = "DESATIVADO"
         return res
-
     if res["vr"] < C.MIN_VOL_RATIO:
         res["status"] = "VOL BAIXO"
         return res
-    res.update(side=side, score=res["vr"] * abs(c1 - c3) / c3 * 100, status=side.upper())
+    res.update(side=trend.lower(), status="SINAL", score=res["vr"] * abs(c1 - c3) / c3 * 100)
     return res
+
+
+class _Fatal(Exception):
+    pass
 
 
 class Engine:
@@ -71,8 +79,12 @@ class Engine:
         self.ex = ex
         self.st = state
         self.pairs = []
-        self.ticks = {}
+        self.tick_size = {}
         self.maxlev = {}
+        self.min_cost = {}
+        self.min_amt = {}
+        self.tick = {}            # último ticker de cada par
+        self.ana = {}             # última análise de cada par
         self.candidates = []
         self.scan_time = 0.0
         self.cooldown = {}
@@ -81,8 +93,10 @@ class Engine:
         self.pause_until = 0.0
         self.pnl_day = 0.0
         self.day = datetime.now(timezone.utc).date()
+        self.day_balance = 0.0
         self.free = 0.0
-        self.halted = False
+        self.fatal_msg = ""
+        self.recovered = False
         self.relaxed = state.get("mode") == "testnet"   # testnet: pouco volume e spreads largos
         self._warned = {}
 
@@ -95,23 +109,58 @@ class Engine:
             self._warned[key] = time.time()
             self.log(msg)
 
-    def alive(self):
-        return self.st["running"] and not self.st["reconnect"]
+    def online(self):
+        """A ligação deve continuar (há chaves, sem pedido de reconexão e sem erro fatal)."""
+        return bool(self.st["api_key"]) and not self.st["reconnect"] and not self.fatal_msg
 
-    def halt(self, msg):
-        self.halted = True
+    def trading(self):
+        """O robô pode operar (botão INICIAR ativo)."""
+        return self.online() and self.st["running"]
+
+    def fail(self, msg):
+        self.fatal_msg = msg
+        self.log(msg)
+
+    def halt_trading(self, msg):
         self.log(msg)
         self.st["running"] = False
 
     async def nap(self, secs):
         end = time.time() + secs
-        while self.alive() and time.time() < end:
+        while self.online() and time.time() < end:
             await asyncio.sleep(min(0.5, max(0.0, end - time.time())))
 
     def roll_day(self):
         today = datetime.now(timezone.utc).date()
         if today != self.day:
-            self.day, self.pnl_day = today, 0.0
+            self.day, self.pnl_day, self.day_balance = today, 0.0, self.st["balance"]
+
+    # ------------------------- dimensionamento (saldo pequeno) -------------------------
+    def lev_for(self, symbol):
+        return max(1, min(int(self.st["leverage"]), self.maxlev.get(symbol, 999)))
+
+    def margin_eff(self):
+        """Margem realmente usada: a definida em Ajustes, limitada a BALANCE_USE_PCT do saldo livre."""
+        return max(0.0, min(float(self.st["margin_usdt"]), self.free * C.BALANCE_USE_PCT / 100))
+
+    def need_notional(self, symbol, price):
+        return max(self.min_cost.get(symbol, C.MIN_NOTIONAL_FALLBACK), self.min_amt.get(symbol, 0.0) * price)
+
+    def tradable(self, sym, t):
+        """(ok, motivo). Filtros de execução do par neste momento."""
+        price = t["last"]
+        if not self.relaxed:
+            if t["qv"] < C.MIN_QUOTE_VOLUME_24H:
+                return False, "VOL 24H BAIXO"
+            bid, ask = t.get("bid"), t.get("ask")
+            if not bid or not ask or (ask - bid) / ask * 100 > C.MAX_SPREAD_PCT:
+                return False, "SPREAD LARGO"
+        if self.tick_size.get(sym, 0) / price * 100 > C.MAX_TICK_PCT:
+            return False, "TICK GRANDE"
+        need = self.need_notional(sym, price)
+        if self.margin_eff() * self.lev_for(sym) < need * 1.02:
+            return False, f"MÍN. ORDEM {need:.1f} USDT"
+        return True, ""
 
     # ------------------------- arranque -------------------------
     async def prepare(self):
@@ -123,10 +172,14 @@ class Engine:
             m = ex.markets.get(s)
             if m and m.get("swap") and m.get("linear") and m.get("active", True):
                 self.pairs.append(s)
-                self.ticks[s] = float((m.get("precision") or {}).get("price") or 0)
-                mx = ((m.get("limits") or {}).get("leverage") or {}).get("max")
+                lim = m.get("limits") or {}
+                self.tick_size[s] = float((m.get("precision") or {}).get("price") or 0)
+                mx = (lim.get("leverage") or {}).get("max")
                 if mx:
                     self.maxlev[s] = int(float(mx))
+                mc = float((lim.get("cost") or {}).get("min") or 0)
+                self.min_cost[s] = mc if mc >= 1 else C.MIN_NOTIONAL_FALLBACK
+                self.min_amt[s] = float((lim.get("amount") or {}).get("min") or 0)
             else:
                 missing.append(s.split("/")[0])
         if not self.pairs:
@@ -136,22 +189,25 @@ class Engine:
             await ex.set_margin_mode(C.MARGIN_MODE, "BTC/USDT:USDT", {"leverage": int(self.st["leverage"])})
         except Exception:
             pass                                        # já está em cross ou a conta não permite alterar
+        self.st["conn"], self.st["conn_msg"] = "ligado", ""
         extra = f" | sem par nesta conta: {', '.join(missing)}" if missing else ""
-        self.log(f"Ligado. {len(self.pairs)}/{len(C.PAIRS)} pares ativos{extra}")
+        self.log(f"Ligado à Bybit. Saldo {self.st['balance']:.4f} USDT | {len(self.pairs)}/{len(C.PAIRS)} pares{extra}")
 
     async def refresh_balance(self):
-        b = await self.ex.fetch_balance()
-        total = float((b.get("total") or {}).get("USDT") or 0)
-        free = float((b.get("free") or {}).get("USDT") or 0)
+        total, free = read_usdt(await self.ex.fetch_balance())
         self.free = free
         self.st["balance"] = total
         self.st["free"] = free
         if not self.st["initial_balance"]:
             self.st["initial_balance"] = total
+        if self.day_balance <= 0 and total > 0:
+            self.day_balance = total
+        if total <= 0:
+            self.warn_once("zero", ZERO_HINT, every=300)
 
     async def run(self):
         await self.prepare()
-        tasks = [asyncio.create_task(t) for t in (self.scanner(), self.trader(), self.balance_loop())]
+        tasks = [asyncio.create_task(t) for t in (self.ticker_loop(), self.scanner(), self.trader(), self.balance_loop())]
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -160,78 +216,108 @@ class Engine:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def balance_loop(self):
-        while self.alive():
+        while self.online():
             await self.nap(10)
-            if not self.alive():
+            if not self.online():
                 break
             try:
                 await self.refresh_balance()
             except Exception as e:
                 msg, fatal = explain_error(e, self.st["mode"])
                 if fatal:
-                    self.halt(msg)
+                    self.fail(msg)
                     return
                 self.warn_once("bal", f"Saldo: {msg}")
 
-    # ------------------- scanner (segundo plano) -------------------
-    async def scan_once(self):
-        tickers = await self.ex.fetch_tickers(self.pairs)
-        pool = []
-        for sym in self.pairs:
-            t = tickers.get(sym)
-            if not t:
-                continue
-            price = t.get("last") or 0
-            if price <= 0 or price >= C.MAX_PRICE_USDT:            # só moedas abaixo de 1 USDT
-                continue
-            qv = t.get("quoteVolume") or 0
-            if not self.relaxed:
-                if qv < C.MIN_QUOTE_VOLUME_24H:
-                    continue
-                bid, ask = t.get("bid"), t.get("ask")
-                if not bid or not ask or (ask - bid) / ask * 100 > C.MAX_SPREAD_PCT:
-                    continue                                       # spread largo come o stop
-            if self.ticks.get(sym, 0) / price * 100 > C.MAX_TICK_PCT:
-                continue                                           # tick grande demais para o preço
-            pool.append((qv, sym))
-        pool.sort(reverse=True)
-        syms = [s for _, s in pool[:C.TOP_N]]
-        res = await asyncio.gather(
-            *(self.ex.fetch_ohlcv(s, "1m", limit=25) for s in syms),
-            return_exceptions=True,
-        )
-        cands, market = [], []
-        for s, c in zip(syms, res):
-            if isinstance(c, Exception):
-                continue
-            a = analyze(c)
-            market.append({
-                "pair": s.split("/")[0], "price": fmt(c[-1][4]),
-                "move": f"{a['move']:.2f}", "vr": f"{a['vr']:.1f}", "status": a["status"],
-            })
-            if a["side"]:
-                cands.append((a["score"], s, a["side"]))
-        cands.sort(reverse=True)
-        self.st["market_data"] = market
-        self.st["scan_info"] = f"{len(pool)}/{len(self.pairs)} pares elegíveis"
-        return cands
-
-    async def scanner(self):
-        while self.alive():
+    # ------------------- sincronizador: preços ao vivo e sinais -------------------
+    async def ticker_loop(self):
+        while self.online():
             try:
-                self.candidates = await self.scan_once()
-                self.scan_time = time.time()
+                tickers = await self.ex.fetch_tickers(self.pairs)
+                for s in self.pairs:
+                    t = tickers.get(s)
+                    if t and (t.get("last") or 0) > 0:
+                        self.tick[s] = {
+                            "last": float(t["last"]), "bid": t.get("bid"), "ask": t.get("ask"),
+                            "qv": float(t.get("quoteVolume") or 0), "pct": float(t.get("percentage") or 0),
+                        }
+                self.publish_market()
                 self.st["last_update"] = hms()
             except Exception as e:
                 msg, fatal = explain_error(e, self.st["mode"])
                 if fatal:
-                    self.halt(msg)
+                    self.fail(msg)
+                    return
+                self.warn_once("tick", f"Preços: {msg}")
+            await self.nap(C.TICKER_INTERVAL_S)
+
+    def publish_market(self):
+        rows, counts = [], {"LONG": 0, "SHORT": 0, "NEUTRO": 0}
+        for s in self.pairs:
+            t = self.tick.get(s)
+            if not t or not (0 < t["last"] < C.MAX_PRICE_USDT):
+                continue
+            a = self.ana.get(s, {})
+            ok, why = self.tradable(s, t)
+            st_ = a.get("status", "")
+            if st_ in ("SATURADO", "VOL BAIXO", "DESATIVADO"):
+                note = st_
+            elif st_ == "SINAL":
+                note = "SINAL ✓" if ok else why
+            else:
+                note = "" if ok else why
+            bid, ask = t.get("bid"), t.get("ask")
+            spread = (ask - bid) / ask * 100 if bid and ask else 0.0
+            trend = a.get("trend", "—")
+            if trend in counts:
+                counts[trend] += 1
+            rows.append({
+                "pair": s.split("/")[0], "p": t["last"], "price": fmt(t["last"]),
+                "chg24": round(t["pct"], 2), "chg1m": round(a.get("chg1m", 0.0), 3),
+                "vr": round(a.get("vr", 0.0), 1), "spread": round(spread, 3),
+                "vol24": f"{t['qv'] / 1e6:.1f}M", "trend": trend, "note": note, "qv": t["qv"],
+            })
+        rows.sort(key=lambda r: -r["qv"])
+        self.st["market_data"] = rows
+        self.st["market_counts"] = counts
+
+    async def scan_once(self):
+        uni = [(self.tick[s]["qv"], s) for s in self.pairs
+               if s in self.tick and 0 < self.tick[s]["last"] < C.MAX_PRICE_USDT]   # só moedas < 1 USDT
+        uni.sort(reverse=True)
+        syms = [s for _, s in uni[:C.TOP_N]]
+        res = await asyncio.gather(*(self.ex.fetch_ohlcv(s, "1m", limit=25) for s in syms), return_exceptions=True)
+        if syms and all(isinstance(r, Exception) for r in res):
+            raise res[0]
+        cands = []
+        for s, c in zip(syms, res):
+            if isinstance(c, Exception):
+                continue
+            a = analyze(c)
+            self.ana[s] = a
+            if a["side"] and self.tradable(s, self.tick[s])[0]:
+                cands.append((a["score"], s, a["side"]))
+        cands.sort(reverse=True)
+        self.candidates = cands
+        self.st["scan_info"] = f"{len(uni)} moedas abaixo de {C.MAX_PRICE_USDT:g} USDT | {len(cands)} sinais prontos"
+        self.publish_market()
+
+    async def scanner(self):
+        while self.online():
+            try:
+                if self.tick:
+                    await self.scan_once()
+                    self.scan_time = time.time()
+            except Exception as e:
+                msg, fatal = explain_error(e, self.st["mode"])
+                if fatal:
+                    self.fail(msg)
                     return
                 self.warn_once("scan", f"Scanner: {msg}")
-            await self.nap(C.SCAN_INTERVAL_S)
+            await self.nap(C.SCAN_BUSY_S if self.st["active_position"] else C.SCAN_INTERVAL_S)
 
     def pick(self):
-        if time.time() - self.scan_time > 6:             # dados velhos: não entra
+        if time.time() - self.scan_time > 15:            # dados velhos: não entra
             return None
         now = time.time()
         for _, s, side in self.candidates:
@@ -302,12 +388,14 @@ class Engine:
         if analyze(c)["side"] != side:
             return
 
-        lev = int(self.st["leverage"])
-        lev = min(lev, self.maxlev.get(symbol, lev))       # respeita o máximo do contrato
-        margin = float(self.st["margin_usdt"])
-        if self.free < margin * 1.05:
-            self.warn_once("free", f"Saldo livre insuficiente ({self.free:.2f} USDT) para margem de {margin:.2f} USDT.")
-            await self.nap(5)
+        lev = self.lev_for(symbol)                         # respeita o máximo do contrato
+        margin = self.margin_eff()                         # saldo pequeno: no máx. 90% do saldo livre
+        price = c[-1][4]
+        need = self.need_notional(symbol, price)
+        if margin * lev < need * 1.02:
+            self.warn_once("min", f"Saldo insuficiente: a ordem mínima de {coin} é {need:.1f} USDT; "
+                                  f"com {lev}x e {margin:.2f} USDT de margem só dá {margin * lev:.2f} USDT.")
+            self.cooldown[symbol] = time.time() + 120
             return
 
         if (symbol, lev) not in self.lev_ok:
@@ -320,15 +408,14 @@ class Engine:
                     return
             self.lev_ok.add((symbol, lev))
 
-        price = c[-1][4]
         amount = float(ex.amount_to_precision(symbol, margin * lev / price))
-        min_amt = ((m.get("limits") or {}).get("amount") or {}).get("min") or 0
-        if amount <= 0 or amount < min_amt:
-            self.log(f"{coin}: margem insuficiente para o tamanho mínimo do contrato")
-            self.cooldown[symbol] = time.time() + 3600
+        if amount <= 0 or amount < self.min_amt.get(symbol, 0) or amount * price < need:
+            self.log(f"{coin}: tamanho abaixo do mínimo do contrato com a margem atual")
+            self.cooldown[symbol] = time.time() + 600
             return
 
         await ex.create_order(symbol, "market", "buy" if d > 0 else "sell", amount)
+        t_open = time.time()
 
         pos = None
         for _ in range(10):
@@ -353,26 +440,32 @@ class Engine:
             self.log(f"SL/TP falhou ({str(e)[:60]}) — a fechar por segurança")
             await self.close(symbol, "sem proteção")
             return
-        self.log(f"ENTRADA {side.upper()} {coin} @ {fmt(entry)} | SL {fmt(sl)} | TP {fmt(tp)} | {lev}x")
-        await self.manage(symbol, d, entry, size, sl, tp, entry)
+        self.log(f"ENTRADA {side.upper()} {coin} @ {fmt(entry)} | SL {fmt(sl)} | TP {fmt(tp)} | {lev}x | margem {margin:.4f}")
+        await self.manage(symbol, d, entry, size, sl, tp, entry, lev, t_open)
 
-    async def manage(self, symbol, d, entry, size, last_sl, tp, best):
+    async def manage(self, symbol, d, entry, size, last_sl, tp, best, lev, opened_ts=None):
         """Gere a posição até fechar. d=+1 long, d=-1 short.
         best = melhor preço atingido (máximo no long, mínimo no short)."""
         ex = self.ex
         coin = symbol.split("/")[0]
         side_txt = "LONG" if d > 0 else "SHORT"
-        tick = float((ex.market(symbol).get("precision") or {}).get("price") or 0)
+        mk = ex.market(symbol)
+        tick = float((mk.get("precision") or {}).get("price") or 0)
         if tick <= 0:
             tick = entry * 1e-4
+        t0 = opened_ts or time.time()
         trailing = False
         reason = "SL/TP na Bybit"
         p, window, last_check, fails = best, deque(), 0.0, 0
+        chart = {"pair": coin, "side": side_txt, "entry": entry, "sl": last_sl, "tp": tp,
+                 "points": [], "closed": False, "trailing": False}
+        pts = chart["points"]
+        self.st["chart"] = chart
 
         while True:
             await asyncio.sleep(C.POLL_INTERVAL_S)
 
-            if not self.alive():                           # PARAR ROBÔ / reconexão: fecha a posição
+            if not self.trading():                         # PARAR ROBÔ / reconexão: fecha a posição
                 reason = "Reconexão" if self.st["reconnect"] else "Robô parado"
                 try:
                     await self.close(symbol, reason)
@@ -401,6 +494,10 @@ class Engine:
             while window and now - window[0][0] > C.REVERSAL_WINDOW_S:
                 window.popleft()
 
+            pts.append([round(now - t0, 1), p])
+            if len(pts) > C.CHART_POINTS:
+                del pts[0]
+            chart["sl"], chart["trailing"] = last_sl, trailing
             self.st["active_position"] = {
                 "pair": coin, "side": side_txt, "entry": fmt(entry), "price": fmt(p),
                 "pnl_pct": round(d * (p - entry) / entry * 100, 3),
@@ -437,15 +534,32 @@ class Engine:
 
         await asyncio.sleep(1.0)
         pnl = await self.realized_pnl(symbol, d, entry, size, p)
+        closed_ts = time.time()
+        cs = mk.get("contractSize") or 1
+        notional = size * entry * cs
+        margin_used = notional / max(1, lev)
         self.pnl_day += pnl
         self.st["realized_pnl"] += pnl
         self.st["active_position"] = None
+        chart.update(closed=True, exit=p, pnl=round(pnl, 4))
+
         hist = self.st["history"]
         hist.insert(0, {
-            "time": hms(), "pair": coin, "side": side_txt, "entry": fmt(entry),
-            "exit": fmt(p), "pnl": round(pnl, 4), "reason": reason,
+            "opened": stamp(t0), "closed": stamp(closed_ts), "dur": int(closed_ts - t0),
+            "pair": coin, "side": side_txt, "entry": fmt(entry), "exit": fmt(p),
+            "qty": size, "notional": round(notional, 4), "margin": round(margin_used, 4),
+            "pnl": round(pnl, 4),
+            "pnl_pct": round(pnl / margin_used * 100, 2) if margin_used > 0 else 0.0,   # sobre a margem
+            "price_pct": round(d * (p - entry) / entry * 100, 3),                       # movimento do preço
+            "reason": reason,
         })
-        del hist[100:]
+        del hist[C.HISTORY_MAX:]
+        cb = self.st.get("history_cb")
+        if cb:
+            try:
+                cb(hist)
+            except Exception:
+                pass
         self.log(f"FIM {side_txt} {coin} | {reason} | PnL {pnl:+.4f} USDT")
 
         self.cooldown[symbol] = time.time() + (C.COOLDOWN_LOSS_S if pnl < 0 else C.COOLDOWN_S)
@@ -463,7 +577,7 @@ class Engine:
             pass
 
     async def recover(self):
-        """Após reinício (deploy), retoma a gestão de posições já abertas nos pares da lista."""
+        """Ao ligar o robô, retoma a gestão de posições já abertas nos pares da lista."""
         try:
             poss = await self.ex.fetch_positions(None, {"subType": "linear", "settleCoin": "USDT"})
         except Exception:
@@ -471,7 +585,7 @@ class Engine:
         for p in poss:
             size = float(p.get("contracts") or 0)
             sym = p.get("symbol")
-            if size <= 0 or sym not in self.pairs or not self.alive():
+            if size <= 0 or sym not in self.pairs or not self.trading():
                 continue
             entry = float(p["entryPrice"])
             d = 1 if p.get("side") == "long" else -1
@@ -483,18 +597,27 @@ class Engine:
             last = (await self.ex.fetch_ticker(sym))["last"]
             best = last if d * (last - entry) > 0 else entry
             self.log(f"Posição existente retomada: {sym.split('/')[0]} {'LONG' if d > 0 else 'SHORT'}")
-            await self.manage(sym, d, entry, size, last_sl, tp, best)
+            await self.manage(sym, d, entry, size, last_sl, tp, best, self.lev_for(sym))
 
     async def trader(self):
-        try:
-            await self.recover()
-        except Exception as e:
-            self.warn_once("rec", f"Recuperação de posições: {explain_error(e, self.st['mode'])[0]}")
-        while self.alive():
+        while self.online():
+            if not self.st["running"]:                     # só sincroniza; não abre operações
+                self.recovered = False
+                await self.nap(1)
+                continue
+            if not self.recovered:
+                self.recovered = True
+                try:
+                    await self.recover()
+                except Exception as e:
+                    self.warn_once("rec", f"Recuperação de posições: {explain_error(e, self.st['mode'])[0]}")
+                continue
             self.roll_day()
-            if self.pnl_day <= -C.MAX_DAILY_LOSS_USDT:
-                self.halt(f"Limite de perda diária atingido ({self.pnl_day:.2f} USDT). Robô parado.")
-                return
+            limit = self.day_balance * C.MAX_DAILY_LOSS_PCT / 100
+            if self.day_balance > 0 and self.pnl_day <= -limit:
+                self.halt_trading(f"Limite de perda diária atingido ({self.pnl_day:.4f} USDT = "
+                                  f"{C.MAX_DAILY_LOSS_PCT:g}% do saldo). Entradas paradas até amanhã.")
+                continue
             if time.time() < self.pause_until:
                 await self.nap(1)
                 continue
@@ -513,35 +636,39 @@ class Engine:
                 except Exception:
                     self.log("ATENÇÃO: não consegui fechar a posição — verifica a Bybit manualmente!")
                 if fatal:
-                    self.halt(msg)
+                    self.fail(msg)
                     return
                 await self.nap(1)
 
 
 async def supervisor(state):
-    """Liga/desliga o motor conforme o botão do painel e reage a erros de ligação."""
+    """Mantém a ligação à Bybit sempre que há chaves (saldo, preços, sinais) e reage aos erros."""
     while True:
-        if not state["running"]:
+        if not (state["api_key"] and state["api_secret"]):
+            state["conn"], state["conn_msg"] = "sem_chaves", ""
             await asyncio.sleep(1)
             continue
         state["reconnect"] = False
+        state["retry"] = False
+        state["conn"], state["conn_msg"] = "a_ligar", ""
         ex = None
+        wait = 0
         try:
             ex = create_exchange(state)
             eng = Engine(ex, state)
             await eng.run()
-            if not eng.halted and not state["reconnect"]:
-                push_log(state, "Robô parado.")
+            if eng.fatal_msg:
+                raise _Fatal(eng.fatal_msg)
+        except _Fatal as e:
+            state["conn"], state["conn_msg"], state["running"], wait = "erro", str(e), False, 60
         except Exception as e:
             msg, fatal = explain_error(e, state.get("mode"))
             push_log(state, msg)
+            state["conn"], state["conn_msg"] = "erro", msg
             if fatal:
-                state["running"] = False
+                state["running"], wait = False, 60
             else:
-                for _ in range(10):
-                    if not state["running"] or state["reconnect"]:
-                        break
-                    await asyncio.sleep(1)
+                wait = 10
         finally:
             state["active_position"] = None
             if ex is not None:
@@ -549,3 +676,7 @@ async def supervisor(state):
                     await ex.close()
                 except Exception:
                     pass
+        for _ in range(wait):                              # espera antes de voltar a tentar
+            if state["retry"] or state["reconnect"] or not (state["api_key"] and state["api_secret"]):
+                break
+            await asyncio.sleep(1)
