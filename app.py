@@ -5,17 +5,22 @@ ND-SCALPING — painel web (Flask) + robô de scalping Bybit.
 Render (Web Service):
   Build Command:  pip install -r requirements.txt
   Start Command:  gunicorn app:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
-  Variável obrigatória: DASHBOARD_PASSWORD (palavra-passe do painel)
+  Nenhuma variável de ambiente é necessária: a palavra-passe do painel e as chaves da Bybit
+  são inseridas no próprio painel (1.º acesso e separador Ajustes).
 """
 import asyncio
+import base64
 import hashlib
 import hmac
+import json
 import os
+import secrets
 import threading
 import time
 from datetime import timedelta
 from functools import wraps
 
+from cryptography.fernet import Fernet, InvalidToken
 from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 
 import config as C
@@ -24,8 +29,7 @@ from trading import push_log, supervisor
 
 app = Flask(__name__)
 
-PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
-app.secret_key = hashlib.sha256(("nd-scalping:" + (PASSWORD or os.urandom(16).hex())).encode()).hexdigest()
+app.secret_key = os.urandom(32).hex()     # novo a cada arranque: depois de reiniciar, é preciso entrar de novo
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -37,8 +41,8 @@ app.config.update(
 bot_state = {
     "running": False,
     "reconnect": False,
-    "api_key": os.getenv("BYBIT_API_KEY", "").strip(),
-    "api_secret": os.getenv("BYBIT_API_SECRET", "").strip(),
+    "api_key": "",
+    "api_secret": "",
     "mode": C.MODE_DEFAULT if C.MODE_DEFAULT in MODES else "testnet",
     "leverage": int(C.LEVERAGE_DEFAULT),
     "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
@@ -56,7 +60,133 @@ bot_state = {
 }
 
 
-# ============================ SEGURANÇA ============================
+# ============================ ARMAZENAMENTO E SEGURANÇA ============================
+# A palavra-passe do painel é criada no 1.º acesso (nada na Render). Fica guardada como hash e é
+# ela que cifra as chaves da Bybit guardadas em disco. O segredo nunca é mostrado de volta.
+ITER = 200_000
+_lock = threading.RLock()
+_store = {}        # conteúdo de settings.json
+_fernet = None     # chave de cifra: só existe em memória, depois de entrares com a palavra-passe
+
+
+def _data_dir():
+    for d in (os.getenv("DATA_DIR"), "/var/data"):            # /var/data = Disk permanente da Render
+        if d and os.path.isdir(d) and os.access(d, os.W_OK):
+            return d, True
+    d = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")   # temporário
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d, False
+
+
+DATA_DIR, PERSISTENT = _data_dir()
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+
+
+def _load():
+    global _store
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            _store = json.load(f)
+    except (OSError, ValueError):
+        _store = {}
+
+
+def _save():
+    with _lock:
+        try:
+            tmp = SETTINGS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_store, f)
+            os.replace(tmp, SETTINGS_FILE)
+            try:
+                os.chmod(SETTINGS_FILE, 0o600)
+            except OSError:
+                pass
+            return True
+        except OSError:
+            return False
+
+
+def _pw_hash(pw, salt_hex):
+    return hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt_hex), ITER).hex()
+
+
+def _make_fernet(pw, salt_hex):
+    key = hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt_hex), ITER, dklen=32)
+    return Fernet(base64.urlsafe_b64encode(key))
+
+
+def has_password():
+    return bool(_store.get("pw_hash"))
+
+
+def check_password(pw):
+    return has_password() and hmac.compare_digest(_pw_hash(pw, _store["pw_salt"]), _store["pw_hash"])
+
+
+def store_credentials():
+    """Cifra as chaves que estão em memória e guarda-as em disco. Devolve False se não for possível."""
+    if _fernet is None:
+        return False
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        payload = json.dumps({"k": bot_state["api_key"], "s": bot_state["api_secret"]}).encode()
+        _store["creds"] = _fernet.encrypt(payload).decode()
+    else:
+        _store.pop("creds", None)
+    return True
+
+
+def persist():
+    """Guarda em disco as preferências (ambiente, alavancagem, margem) e as chaves cifradas."""
+    _store.update(mode=bot_state["mode"], leverage=bot_state["leverage"], margin_usdt=bot_state["margin_usdt"])
+    return _save()
+
+
+def set_password(pw):
+    """Define (ou altera) a palavra-passe do painel e volta a cifrar as chaves com ela."""
+    global _fernet
+    with _lock:
+        _store["pw_salt"] = secrets.token_hex(16)
+        _store["pw_hash"] = _pw_hash(pw, _store["pw_salt"])
+        _store["enc_salt"] = secrets.token_hex(16)
+        _fernet = _make_fernet(pw, _store["enc_salt"])
+        store_credentials()
+        _save()
+
+
+def unlock(pw):
+    """Chamado depois de entrares: ativa a cifra e carrega as chaves guardadas para a memória."""
+    global _fernet
+    _fernet = _make_fernet(pw, _store["enc_salt"])
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        return
+    token = _store.get("creds")
+    if not token:
+        return
+    try:
+        c = json.loads(_fernet.decrypt(token.encode()).decode())
+        bot_state["api_key"], bot_state["api_secret"] = c["k"], c["s"]
+        push_log(bot_state, "Chaves da Bybit carregadas. Carrega em INICIAR ROBÔ.")
+    except (InvalidToken, ValueError, KeyError):
+        push_log(bot_state, "Não consegui ler as chaves guardadas. Insere-as de novo em Ajustes.")
+
+
+def _apply_prefs():
+    if _store.get("mode") in MODES:
+        bot_state["mode"] = _store["mode"]
+    try:
+        bot_state["leverage"] = max(1, min(50, int(_store.get("leverage", bot_state["leverage"]))))
+        bot_state["margin_usdt"] = max(1.0, float(_store.get("margin_usdt", bot_state["margin_usdt"])))
+    except (TypeError, ValueError):
+        pass
+
+
+_load()
+_apply_prefs()
+
 _fails = {}
 
 
@@ -72,63 +202,116 @@ def _locked(ip):
     return n >= 5
 
 
+def _fail(ip):
+    n, _ = _fails.get(ip, (0, 0.0))
+    _fails[ip] = (n + 1, time.time())
+
+
 def login_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
-        if not PASSWORD:
-            return render_template_string(NO_PASSWORD_HTML), 503
-        if not session.get("ok"):
+        if not has_password() or not session.get("ok"):
             if request.path.startswith("/api/"):
                 return jsonify({"error": "login"}), 401
-            return redirect(url_for("login"))
+            return redirect(url_for("login" if has_password() else "setup"))
         return fn(*a, **kw)
     return wrapper
 
 
-NO_PASSWORD_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
-<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f19;color:#f8fafc;padding:24px}
-.box{max-width:420px;margin:60px auto;background:#131b2e;border:1px solid #1e293b;border-radius:8px;padding:20px}
-h1{color:#22c55e;font-size:16px;letter-spacing:1.5px}code{background:#0b0f19;padding:2px 6px;border-radius:4px;color:#38bdf8}</style></head>
-<body><div class="box"><h1>ND-SCALPING</h1>
-<p>Painel bloqueado por segurança.</p>
-<p>Na Render, abre o serviço &gt; <b>Environment</b> e cria a variável <code>DASHBOARD_PASSWORD</code> com uma palavra-passe forte. Depois faz Redeploy.</p>
-<p>Sem isto, qualquer pessoa com o link poderia ver e controlar o robô.</p></div></body></html>"""
+_PAGE_CSS = """body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f19;color:#f8fafc;margin:0;padding:24px}
+.box{max-width:360px;margin:70px auto;background:#131b2e;border:1px solid #1e293b;border-radius:8px;padding:20px}
+h1{color:#22c55e;text-align:center;font-size:16px;letter-spacing:1.5px;margin-top:0}
+p{font-size:13px;color:#cbd5e1;line-height:1.5}
+input{width:100%;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #1e293b;background:#0b0f19;color:#fff;box-sizing:border-box;font-size:14px}
+button{width:100%;padding:13px;border:none;border-radius:8px;background:#22c55e;color:#fff;font-weight:800;letter-spacing:1px;font-size:13px;margin-top:6px}
+.err{color:#f87171;font-size:12px;margin:6px 0}"""
 
 LOGIN_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
-<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f19;color:#f8fafc;margin:0;padding:24px}
-.box{max-width:360px;margin:80px auto;background:#131b2e;border:1px solid #1e293b;border-radius:8px;padding:20px}
-h1{color:#22c55e;text-align:center;font-size:16px;letter-spacing:1.5px;margin-top:0}
-input{width:100%;padding:12px;margin:10px 0;border-radius:6px;border:1px solid #1e293b;background:#0b0f19;color:#fff;box-sizing:border-box;font-size:14px}
-button{width:100%;padding:13px;border:none;border-radius:8px;background:#22c55e;color:#fff;font-weight:800;letter-spacing:1px;font-size:13px}
-.err{color:#f87171;font-size:12px;margin:6px 0}</style></head>
+<style>""" + _PAGE_CSS + """</style></head>
 <body><div class="box"><h1>ND-SCALPING</h1>
-<form method="POST"><input type="password" name="password" placeholder="Palavra-passe" autofocus required>
+<form method="POST"><input type="password" name="password" placeholder="Palavra-passe do painel" autofocus required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
 <button type="submit">ENTRAR</button></form></div></body></html>"""
+
+SETUP_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
+<style>""" + _PAGE_CSS + """</style></head>
+<body><div class="box"><h1>ND-SCALPING</h1>
+<p><b>Primeiro acesso.</b> Cria a palavra-passe do painel. Ela protege o painel e cifra as chaves da Bybit que guardares em Ajustes.</p>
+<form method="POST">
+<input type="password" name="password" placeholder="Palavra-passe (mínimo 8 caracteres)" minlength="8" autofocus required>
+<input type="password" name="password2" placeholder="Repetir palavra-passe" minlength="8" required>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<button type="submit">CRIAR E ENTRAR</button></form></div></body></html>"""
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if has_password():
+        return redirect(url_for("login"))
+    error = None
+    if request.method == "POST":
+        pw, pw2 = request.form.get("password", ""), request.form.get("password2", "")
+        if len(pw) < 8:
+            error = "A palavra-passe precisa de pelo menos 8 caracteres."
+        elif pw != pw2:
+            error = "As palavras-passe não coincidem."
+        else:
+            with _lock:
+                if has_password():
+                    return redirect(url_for("login"))
+                set_password(pw)
+            session.clear()
+            session["ok"] = True
+            session.permanent = True
+            push_log(bot_state, "Palavra-passe criada. Insere as chaves da Bybit em Ajustes.")
+            return redirect(url_for("index"))
+    return render_template_string(SETUP_HTML, error=error)
 
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
-    if not PASSWORD:
-        return render_template_string(NO_PASSWORD_HTML), 503
+    if not has_password():
+        return redirect(url_for("setup"))
     error = None
     if request.method == "POST":
         ip = _ip()
+        pw = request.form.get("password", "")
         if _locked(ip):
             error = "Demasiadas tentativas. Tenta daqui a 10 minutos."
-        elif hmac.compare_digest(request.form.get("password", ""), PASSWORD):
+        elif check_password(pw):
             _fails.pop(ip, None)
             session.clear()
             session["ok"] = True
             session.permanent = True
+            unlock(pw)
             return redirect(url_for("index"))
         else:
-            n, _ = _fails.get(ip, (0, 0.0))
-            _fails[ip] = (n + 1, time.time())
+            _fail(ip)
             error = "Palavra-passe incorreta."
     return render_template_string(LOGIN_HTML, error=error)
+
+
+@app.route("/password", methods=["POST"])
+@login_required
+def password():
+    f, ip = request.form, _ip()
+    cur, new, new2 = f.get("current", ""), f.get("new", ""), f.get("new2", "")
+    if _locked(ip):
+        msg = "Demasiadas tentativas. Tenta daqui a 10 minutos."
+    elif not check_password(cur):
+        _fail(ip)
+        msg = "✖ Palavra-passe atual incorreta."
+    elif len(new) < 8:
+        msg = "✖ A nova palavra-passe precisa de pelo menos 8 caracteres."
+    elif new != new2:
+        msg = "✖ As novas palavras-passe não coincidem."
+    else:
+        set_password(new)
+        msg = "✔ Palavra-passe do painel alterada."
+    push_log(bot_state, msg)
+    return redirect(url_for("index"))
 
 
 @app.route("/logout")
@@ -192,6 +375,7 @@ def index():
         secret_set=bool(s["api_secret"]),
         running=s["running"],
         total_pairs=len(C.PAIRS),
+        persistent=PERSISTENT,
     )
 
 
@@ -222,7 +406,9 @@ def settings():
     except (TypeError, ValueError):
         pass
 
-    msg = "Definições guardadas."
+    saved = store_credentials()
+    persist()
+    msg = "Definições guardadas." if saved else "Definições guardadas só em memória (entra de novo no painel para as cifrar em disco)."
     if changed:
         s["initial_balance"], s["realized_pnl"], s["history"] = 0.0, 0.0, []
         if s["running"]:
@@ -268,8 +454,6 @@ def start_background():
         return
     app._bot_started = True
     threading.Thread(target=_bot_thread, name="nd-bot", daemon=True).start()
-    if os.getenv("AUTO_START") == "1" and bot_state["api_key"] and bot_state["api_secret"]:
-        bot_state["running"] = True
 
 
 start_background()
@@ -492,7 +676,22 @@ HTML_TEMPLATE = """
                     <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
                     <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação à Bybit</button>
                 </form>
-                <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta. As chaves ficam só na memória do servidor: se a Render reiniciar, volta a inseri-las (ou define BYBIT_API_KEY / BYBIT_API_SECRET em Environment).</p>
+                <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta.
+                {% if persistent %}As chaves ficam guardadas no servidor, cifradas com a palavra-passe do painel.
+                {% else %}<span style="color:#f59e0b">Armazenamento temporário: se a Render reiniciar, a palavra-passe e as chaves perdem-se e tens de as inserir de novo. Para guardar de forma permanente, adiciona um Disk na Render com Mount Path /var/data.</span>{% endif %}</p>
+            </div>
+
+            <div class="card">
+                <h3 style="margin-bottom: 15px;">Segurança do painel</h3>
+                <form action="/password" method="POST" autocomplete="off">
+                    <label>Palavra-passe atual:</label>
+                    <input type="password" name="current" required>
+                    <label>Nova palavra-passe (mínimo 8):</label>
+                    <input type="password" name="new" minlength="8" required>
+                    <label>Repetir nova palavra-passe:</label>
+                    <input type="password" name="new2" minlength="8" required>
+                    <button type="submit" class="btn-save">Alterar palavra-passe do painel</button>
+                </form>
             </div>
             <a class="logout" href="/logout">Sair do painel</a>
         </div>
