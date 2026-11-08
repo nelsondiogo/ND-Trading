@@ -25,6 +25,6 @@ def get_exchange(bot_state):
         exchange.load_markets()
         bot_state["log"] = "Conexão Bybit estabelecida com sucesso."
         return exchange
-    except Exception:
-        bot_state["log"] = "Erro de autenticação Bybit. Verifique as chaves."
+    except Exception as e:
+        bot_state["log"] = f"Erro de autenticação Bybit: {str(e)[:40]}"
         return None
