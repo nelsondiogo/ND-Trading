@@ -1,28 +1,279 @@
-import time
+# -*- coding: utf-8 -*-
+"""
+ND-SCALPING — painel web (Flask) + robô de scalping Bybit.
+
+Render (Web Service):
+  Build Command:  pip install -r requirements.txt
+  Start Command:  gunicorn app:app --workers 1 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
+  Variável obrigatória: DASHBOARD_PASSWORD (palavra-passe do painel)
+"""
+import asyncio
+import hashlib
+import hmac
+import os
 import threading
-import datetime
-from flask import Flask, render_template_string, request, redirect, url_for, jsonify
-from config import PAIRS, LEVERAGE_DEFAULT
-from exchange_management import get_exchange
-from trading import execute_trading_logic
+import time
+from datetime import timedelta
+from functools import wraps
+
+from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
+
+import config as C
+from exchange_management import MODES, test_connection
+from trading import push_log, supervisor
 
 app = Flask(__name__)
 
+PASSWORD = os.getenv("DASHBOARD_PASSWORD", "")
+app.secret_key = hashlib.sha256(("nd-scalping:" + (PASSWORD or os.urandom(16).hex())).encode()).hexdigest()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.getenv("RENDER")),   # a Render serve em https
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=12),
+)
+
+# Estado partilhado entre o painel (Flask) e o robô (thread própria).
 bot_state = {
     "running": False,
-    "api_key": "",
-    "api_secret": "",
-    "is_demo": True,
-    "leverage": LEVERAGE_DEFAULT,
+    "reconnect": False,
+    "api_key": os.getenv("BYBIT_API_KEY", "").strip(),
+    "api_secret": os.getenv("BYBIT_API_SECRET", "").strip(),
+    "mode": C.MODE_DEFAULT if C.MODE_DEFAULT in MODES else "testnet",
+    "leverage": int(C.LEVERAGE_DEFAULT),
+    "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
     "initial_balance": 0.0,
     "balance": 0.0,
+    "free": 0.0,
     "realized_pnl": 0.0,
     "active_position": None,
     "market_data": [],
+    "scan_info": "",
     "history": [],
+    "events": [],
     "last_update": "Aguardando...",
-    "log": "ND-SCALPING Ativo (Versão Estável 05h-07h)!"
+    "log": "ND-SCALPING parado.",
 }
+
+
+# ============================ SEGURANÇA ============================
+_fails = {}
+
+
+def _ip():
+    return request.headers.get("X-Forwarded-For", "").split(",")[0].strip() or request.remote_addr or "?"
+
+
+def _locked(ip):
+    n, t = _fails.get(ip, (0, 0.0))
+    if time.time() - t >= 600:
+        _fails.pop(ip, None)
+        return False
+    return n >= 5
+
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*a, **kw):
+        if not PASSWORD:
+            return render_template_string(NO_PASSWORD_HTML), 503
+        if not session.get("ok"):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "login"}), 401
+            return redirect(url_for("login"))
+        return fn(*a, **kw)
+    return wrapper
+
+
+NO_PASSWORD_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f19;color:#f8fafc;padding:24px}
+.box{max-width:420px;margin:60px auto;background:#131b2e;border:1px solid #1e293b;border-radius:8px;padding:20px}
+h1{color:#22c55e;font-size:16px;letter-spacing:1.5px}code{background:#0b0f19;padding:2px 6px;border-radius:4px;color:#38bdf8}</style></head>
+<body><div class="box"><h1>ND-SCALPING</h1>
+<p>Painel bloqueado por segurança.</p>
+<p>Na Render, abre o serviço &gt; <b>Environment</b> e cria a variável <code>DASHBOARD_PASSWORD</code> com uma palavra-passe forte. Depois faz Redeploy.</p>
+<p>Sem isto, qualquer pessoa com o link poderia ver e controlar o robô.</p></div></body></html>"""
+
+LOGIN_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
+<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#0b0f19;color:#f8fafc;margin:0;padding:24px}
+.box{max-width:360px;margin:80px auto;background:#131b2e;border:1px solid #1e293b;border-radius:8px;padding:20px}
+h1{color:#22c55e;text-align:center;font-size:16px;letter-spacing:1.5px;margin-top:0}
+input{width:100%;padding:12px;margin:10px 0;border-radius:6px;border:1px solid #1e293b;background:#0b0f19;color:#fff;box-sizing:border-box;font-size:14px}
+button{width:100%;padding:13px;border:none;border-radius:8px;background:#22c55e;color:#fff;font-weight:800;letter-spacing:1px;font-size:13px}
+.err{color:#f87171;font-size:12px;margin:6px 0}</style></head>
+<body><div class="box"><h1>ND-SCALPING</h1>
+<form method="POST"><input type="password" name="password" placeholder="Palavra-passe" autofocus required>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<button type="submit">ENTRAR</button></form></div></body></html>"""
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if not PASSWORD:
+        return render_template_string(NO_PASSWORD_HTML), 503
+    error = None
+    if request.method == "POST":
+        ip = _ip()
+        if _locked(ip):
+            error = "Demasiadas tentativas. Tenta daqui a 10 minutos."
+        elif hmac.compare_digest(request.form.get("password", ""), PASSWORD):
+            _fails.pop(ip, None)
+            session.clear()
+            session["ok"] = True
+            session.permanent = True
+            return redirect(url_for("index"))
+        else:
+            n, _ = _fails.get(ip, (0, 0.0))
+            _fails[ip] = (n + 1, time.time())
+            error = "Palavra-passe incorreta."
+    return render_template_string(LOGIN_HTML, error=error)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+@app.route("/health")
+def health():
+    return "ok"          # público e sem dados: serve para pings (UptimeRobot) e health check da Render
+
+
+# ============================ PAINEL ============================
+def mask(s):
+    s = str(s or "")
+    if not s:
+        return ""
+    return s[:4] + "…" + s[-4:] if len(s) > 8 else "••••"
+
+
+def snapshot():
+    s = bot_state
+    return {
+        "running": s["running"],
+        "mode": s["mode"],
+        "mode_label": MODES.get(s["mode"], s["mode"]),
+        "leverage": s["leverage"],
+        "margin_usdt": s["margin_usdt"],
+        "balance": s["balance"],
+        "initial_balance": s["initial_balance"],
+        "free": s["free"],
+        "realized_pnl": s["realized_pnl"],
+        "active_position": s["active_position"],
+        "market_data": list(s["market_data"]),
+        "scan_info": s["scan_info"],
+        "history": list(s["history"])[:30],
+        "events": list(s["events"])[:8],
+        "last_update": s["last_update"],
+        "log": s["log"],
+    }
+
+
+@app.route("/api/state")
+@login_required
+def api_state():
+    return jsonify(snapshot())
+
+
+@app.route("/")
+@login_required
+def index():
+    s = bot_state
+    return render_template_string(
+        HTML_TEMPLATE,
+        modes=MODES,
+        mode=s["mode"],
+        leverage=int(s["leverage"]),
+        margin=float(s["margin_usdt"]),
+        key_mask=mask(s["api_key"]),
+        secret_set=bool(s["api_secret"]),
+        running=s["running"],
+        total_pairs=len(C.PAIRS),
+    )
+
+
+@app.route("/settings", methods=["POST"])
+@login_required
+def settings():
+    f = request.form
+    s = bot_state
+    key = (f.get("api_key") or "").strip()
+    secret = (f.get("api_secret") or "").strip()
+    mode = f.get("mode", s["mode"])
+    if mode not in MODES:
+        mode = s["mode"]
+
+    changed = False
+    if key and key != s["api_key"]:
+        s["api_key"], changed = key, True
+    if secret and secret != s["api_secret"]:
+        s["api_secret"], changed = secret, True
+    if mode != s["mode"]:
+        s["mode"], changed = mode, True
+    try:
+        s["leverage"] = max(1, min(50, int(f.get("leverage", s["leverage"]))))
+    except (TypeError, ValueError):
+        pass
+    try:
+        s["margin_usdt"] = max(1.0, float(str(f.get("margin_usdt", s["margin_usdt"])).replace(",", ".")))
+    except (TypeError, ValueError):
+        pass
+
+    msg = "Definições guardadas."
+    if changed:
+        s["initial_balance"], s["realized_pnl"], s["history"] = 0.0, 0.0, []
+        if s["running"]:
+            s["reconnect"] = True
+            msg += " A reconectar com as novas chaves (a posição aberta é fechada)."
+
+    if f.get("action") == "test":
+        ok, res = asyncio.run(test_connection(dict(s)))
+        msg = ("✔ " if ok else "✖ ") + res
+    push_log(s, msg)
+    return redirect(url_for("index"))
+
+
+@app.route("/toggle", methods=["POST"])
+@login_required
+def toggle():
+    s = bot_state
+    if not s["running"]:
+        if not s["api_key"] or not s["api_secret"]:
+            push_log(s, "Erro: insere as chaves Bybit em Ajustes!")
+            return redirect(url_for("index"))
+        s["running"] = True
+        push_log(s, "A iniciar o robô...")
+    else:
+        s["running"] = False
+        push_log(s, "A parar... a posição aberta (se existir) é fechada.")
+    return redirect(url_for("index"))
+
+
+# ============================ ROBÔ (thread própria) ============================
+def _bot_thread():
+    while True:
+        try:
+            asyncio.run(supervisor(bot_state))
+        except Exception as e:                           # nunca deixa o robô morrer em silêncio
+            bot_state["running"] = False
+            push_log(bot_state, f"Erro interno: {str(e)[:100]}")
+            time.sleep(5)
+
+
+def start_background():
+    if getattr(app, "_bot_started", False):
+        return
+    app._bot_started = True
+    threading.Thread(target=_bot_thread, name="nd-bot", daemon=True).start()
+    if os.getenv("AUTO_START") == "1" and bot_state["api_key"] and bot_state["api_secret"]:
+        bot_state["running"] = True
+
+
+start_background()
+
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -36,159 +287,214 @@ HTML_TEMPLATE = """
         .container { max-width: 480px; margin: auto; }
         h1 { color: #22c55e; text-align: center; font-size: 16px; margin: 4px 0 2px 0; font-weight: 800; letter-spacing: 1.5px; }
         .clock { text-align: center; font-size: 11px; color: #38bdf8; margin-bottom: 12px; font-weight: bold; }
-        
         .balance-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
         .balance-box { background: #131b2e; border: 1px solid #1e293b; padding: 12px 8px; border-radius: 8px; text-align: center; }
         .balance-box span { display: block; font-size: 9px; color: #64748b; text-transform: uppercase; margin-bottom: 4px; font-weight: 700; }
         .balance-box strong { font-size: 14px; color: #22c55e; }
-        
         .card { background: #131b2e; border: 1px solid #1e293b; padding: 14px; border-radius: 8px; margin-bottom: 10px; }
         .card h3 { color: #38bdf8; font-size: 11px; margin-top: 0; margin-bottom: 10px; text-transform: uppercase; font-weight: 700; letter-spacing: 0.5px; }
-        
         label { font-size: 12px; color: #38bdf8; font-weight: 600; display: block; margin-top: 8px; }
-        input[type="text"], input[type="number"] { width: 100% !important; padding: 10px; margin-top: 6px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #1e293b; background: #0b0f19; color: #fff; box-sizing: border-box; font-size: 13px; }
-        input[type="password"] { width: 100% !important; padding: 10px; margin-top: 6px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #1e293b; background: #0b0f19; color: #fff; box-sizing: border-box; font-size: 11px; letter-spacing: 3px; text-overflow: ellipsis; }
-        
-        .checkbox-container { display: flex; align-items: center; gap: 8px; margin: 12px 0 16px 0; font-size: 13px; color: #cbd5e1; cursor: pointer; }
-        
+        input[type="text"], input[type="number"], input[type="password"], select { width: 100%; padding: 10px; margin-top: 6px; margin-bottom: 10px; border-radius: 6px; border: 1px solid #1e293b; background: #0b0f19; color: #fff; box-sizing: border-box; font-size: 13px; }
         .btn-action { width: 100%; padding: 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; cursor: pointer; color: #ffffff; }
         .btn-action.start { background: #22c55e; }
         .btn-action.stop { background: #ef4444; }
         .btn-save { width: 100%; padding: 12px; border-radius: 6px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; background: #0284c7; color: #ffffff; margin-top: 6px; }
-
+        .btn-test { background: #334155; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
-        
         .nav-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: #0b0f19; border-top: 1px solid #1e293b; display: flex; justify-content: space-around; align-items: center; padding: 8px 0; z-index: 100; height: 52px; }
         .nav-btn { background: none; border: none; color: #64748b; font-size: 10px; font-weight: bold; cursor: pointer; text-align: center; flex: 1; }
         .nav-btn.active { color: #22c55e; }
-        
-        .log-box { background: #0b0f19; border-left: 3px solid #22c55e; padding: 10px; border-radius: 4px; font-size: 11px; color: #22c55e; font-weight: 600; word-break: break-all; }
+        .log-box { background: #0b0f19; border-left: 3px solid #22c55e; padding: 10px; border-radius: 4px; font-size: 12px; color: #22c55e; font-weight: 600; word-break: break-word; }
+        .events { margin-top: 8px; font-size: 10px; color: #64748b; line-height: 1.5; word-break: break-word; }
         .market-item { display: flex; justify-content: space-between; align-items: center; background: #0b0f19; padding: 10px 12px; border-radius: 6px; margin-bottom: 8px; border: 1px solid #1e293b; }
-        .badge-neutral { background: #1e293b; color: #94a3b8; font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: bold; }
+        .badge-neutral, .badge-long, .badge-short { font-size: 10px; padding: 3px 8px; border-radius: 4px; font-weight: bold; white-space: nowrap; }
+        .badge-neutral { background: #1e293b; color: #94a3b8; }
+        .badge-long { background: #14532d; color: #4ade80; }
+        .badge-short { background: #7f1d1d; color: #f87171; }
+        .sub { font-size: 11px; color: #94a3b8; }
+        .muted { text-align: center; color: #94a3b8; font-size: 12px; margin: 14px 0; }
+        .pos { color: #22c55e; } .neg { color: #ef4444; }
+        .mode-tag { display: inline-block; font-size: 10px; font-weight: 800; padding: 2px 8px; border-radius: 4px; background: #1e293b; color: #38bdf8; }
+        .mode-tag.real { background: #7f1d1d; color: #fecaca; }
         p { margin: 4px 0; font-size: 13px; }
+        .hint { font-size: 11px; color: #64748b; margin: -4px 0 8px 0; }
+        a.logout { display: block; text-align: center; color: #64748b; font-size: 12px; margin-top: 14px; }
     </style>
     <script>
         function showTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.nav-btn').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(function (el) { el.classList.remove('active'); });
+            document.querySelectorAll('.nav-btn').forEach(function (el) { el.classList.remove('active'); });
             document.getElementById(tabId).classList.add('active');
-            if(document.getElementById('btn-' + tabId)) {
-                document.getElementById('btn-' + tabId).classList.add('active');
-            }
+            var b = document.getElementById('btn-' + tabId);
+            if (b) { b.classList.add('active'); }
             localStorage.setItem('activeNdTab', tabId);
         }
-        window.onload = function() {
-            let savedTab = localStorage.getItem('activeNdTab');
-            if (savedTab && document.getElementById(savedTab)) {
-                showTab(savedTab);
-            }
-            setInterval(function() {
-                fetch('/api/state')
-                    .then(response => response.json())
-                    .then(data => {
-                        if(data.log) { let l = document.querySelector('.log-box'); if(l) l.innerText = data.log; }
-                        if(data.last_update) { let c = document.querySelector('.clock'); if(c) c.innerText = "Sincronizado: " + data.last_update; }
-                    });
-            }, 2000);
+        function esc(s) {
+            return String(s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
         }
+        function money(x) { return Number(x || 0).toFixed(2); }
+        function sgn(x, d) { x = Number(x || 0); return (x >= 0 ? '+' : '') + x.toFixed(d); }
+        function setText(id, t) { var e = document.getElementById(id); if (e) { e.innerText = t; } }
+
+        function render(d) {
+            setText('clock', 'Sincronizado: ' + d.last_update);
+            setText('bal-initial', money(d.initial_balance));
+            setText('bal-now', money(d.balance));
+            setText('lev-title', 'ALAVANCAGEM CONFIGURADA: ' + d.leverage + 'x');
+            setText('lev-info', 'Margem por operação: ' + money(d.margin_usdt) + ' USDT → posição de ' + money(d.margin_usdt * d.leverage) + ' USDT');
+            setText('free', 'Saldo livre: ' + money(d.free) + ' USDT');
+            var st = document.getElementById('status');
+            st.innerText = d.running ? 'OPERANDO' : 'PARADO';
+            st.style.color = d.running ? '#22c55e' : '#ef4444';
+            var pn = document.getElementById('pnl');
+            pn.innerText = sgn(d.realized_pnl, 4);
+            pn.style.color = d.realized_pnl >= 0 ? '#22c55e' : '#ef4444';
+            var mt = document.getElementById('mode-tag');
+            mt.innerText = d.mode_label;
+            mt.className = 'mode-tag' + (d.mode === 'real' ? ' real' : '');
+            setText('log-box', d.log);
+            setText('events', d.events.join('\\n'));
+            var btn = document.getElementById('toggle-btn');
+            btn.className = 'btn-action ' + (d.running ? 'stop' : 'start');
+            btn.innerText = d.running ? 'PARAR ROBÔ' : 'INICIAR ROBÔ';
+
+            var p = d.active_position, pb = document.getElementById('pos-box');
+            if (p) {
+                var cls = p.pnl_pct >= 0 ? 'pos' : 'neg';
+                pb.innerHTML = '<b>' + esc(p.side) + ' ' + esc(p.pair) + '</b>' + (p.trailing ? ' <span class="badge-long">DINAMITE</span>' : '') +
+                    '<p class="sub">Entrada ' + esc(p.entry) + ' | Preço ' + esc(p.price) + '</p>' +
+                    '<p class="' + cls + '" style="font-size:16px;font-weight:800">' + sgn(p.pnl_pct, 3) + '%</p>' +
+                    '<p class="sub">SL ' + esc(p.sl) + ' | TP ' + esc(p.tp) + '</p>';
+            } else {
+                pb.innerHTML = '<p class="muted">Nenhuma posição ativa no momento.</p>';
+            }
+
+            setText('scan-info', d.scan_info ? ('Varredura: ' + d.scan_info) : '');
+            var ml = document.getElementById('market-list');
+            if (!d.market_data.length) {
+                ml.innerHTML = '<p class="muted">' + (d.running ? 'A carregar cotações...' : 'Inicia o robô para ver o mercado.') + '</p>';
+            } else {
+                var h = '';
+                d.market_data.forEach(function (it) {
+                    var c = it.status === 'LONG' ? 'badge-long' : (it.status === 'SHORT' ? 'badge-short' : 'badge-neutral');
+                    h += '<div class="market-item"><div><b style="font-size:14px">' + esc(it.pair) + '</b><br><span class="sub">Preço: ' + esc(it.price) +
+                        ' | 1m: ' + esc(it.move) + '% | Vol: ' + esc(it.vr) + 'x</span></div><span class="' + c + '">' + esc(it.status) + '</span></div>';
+                });
+                ml.innerHTML = h;
+            }
+
+            var hl = document.getElementById('history-list');
+            if (!d.history.length) {
+                hl.innerHTML = '<p class="muted">Nenhuma operação fechada ainda.</p>';
+            } else {
+                var x = '';
+                d.history.forEach(function (t) {
+                    var c = t.pnl >= 0 ? 'pos' : 'neg';
+                    x += '<div class="market-item"><div><b>' + esc(t.side) + ' ' + esc(t.pair) + '</b><br><span class="sub">' + esc(t.time) + ' | ' +
+                        esc(t.entry) + ' → ' + esc(t.exit) + '<br>' + esc(t.reason) + '</span></div><b class="' + c + '">' + sgn(t.pnl, 4) + '</b></div>';
+                });
+                hl.innerHTML = x;
+            }
+        }
+
+        function refresh() {
+            fetch('/api/state', { credentials: 'same-origin' })
+                .then(function (r) { if (r.status === 401) { location.reload(); return null; } return r.json(); })
+                .then(function (d) { if (d) { render(d); } })
+                .catch(function () {});
+        }
+
+        window.onload = function () {
+            var saved = localStorage.getItem('activeNdTab');
+            if (saved && document.getElementById(saved)) { showTab(saved); }
+            refresh();
+            setInterval(refresh, 2000);
+        };
     </script>
 </head>
 <body>
     <div class="container">
         <h1>ND-SCALPING</h1>
-        <div class="clock">Sincronizado: {{ last_update }}</div>
+        <div class="clock" id="clock">Sincronizado: ...</div>
 
         <div id="dashboard" class="tab-content active">
             <div class="balance-grid">
-                <div class="balance-box"><span>INICIAL</span><strong>+{{ "%.6f"|format(initial_balance) }}</strong></div>
-                <div class="balance-box"><span>ATUAL</span><strong>+{{ "%.6f"|format(balance) }}</strong></div>
-            </div>
-            
-            <div class="card">
-                <p style="text-align: center; color: #94a3b8; font-size: 12px; margin: 12px 0;">
-                    {% if active_position %}
-                        Ativo em Operação: <b>{{ active_position.pair }}</b>
-                    {% else %}
-                        Nenhuma posição ativa no momento.
-                    {% endif %}
-                </p>
+                <div class="balance-box"><span>INICIAL (USDT)</span><strong id="bal-initial">0.00</strong></div>
+                <div class="balance-box"><span>ATUAL (USDT)</span><strong id="bal-now">0.00</strong></div>
             </div>
 
+            <div class="card" id="pos-box"><p class="muted">Nenhuma posição ativa no momento.</p></div>
+
             <div class="card">
-                <h3 style="color: #38bdf8;">ALAVANCAGEM CONFIGURADA: {{ leverage }}x</h3>
-                <p style="font-size: 12px; color: #cbd5e1;">Poder de Compra: <b>+{{ "%.6f"|format(balance * leverage) }} USDT</b></p>
+                <h3 id="lev-title">ALAVANCAGEM CONFIGURADA: {{ leverage }}x</h3>
+                <p class="sub" id="lev-info"></p>
+                <p class="sub" id="free"></p>
+                <p style="margin-top:8px"><span class="mode-tag" id="mode-tag">{{ modes[mode] }}</span></p>
             </div>
 
             <div class="balance-grid">
-                <div class="balance-box">
-                    <span>STATUS</span>
-                    <strong style="color: {{ '#22c55e' if running else '#ef4444' }}; font-size: 12px;">{{ 'OPERANDO' if running else 'PARADO' }}</strong>
-                </div>
-                <div class="balance-box">
-                    <span>PNL REALIZADO</span>
-                    <strong style="font-size: 12px; color: {{ '#22c55e' if realized_pnl >= 0 else '#ef4444' }}">{{ "%.6f"|format(realized_pnl) }}</strong>
-                </div>
+                <div class="balance-box"><span>STATUS</span><strong id="status" style="font-size: 12px; color: #ef4444;">PARADO</strong></div>
+                <div class="balance-box"><span>PNL REALIZADO</span><strong id="pnl" style="font-size: 12px;">+0.0000</strong></div>
             </div>
 
             <div class="card">
                 <h3>ESTADO / LOG DA API:</h3>
-                <div class="log-box">{{ log }}</div>
+                <div class="log-box" id="log-box">...</div>
+                <div class="events" id="events" style="white-space: pre-line;"></div>
             </div>
 
             <form action="/toggle" method="POST" style="margin-top: 15px;">
-                <button type="submit" class="btn-action {{ 'stop' if running else 'start' }}">
-                    {{ 'PARAR ROBÔ' if running else 'INICIAR ROBÔ' }}
-                </button>
+                <button type="submit" id="toggle-btn" class="btn-action {{ 'stop' if running else 'start' }}">{{ 'PARAR ROBÔ' if running else 'INICIAR ROBÔ' }}</button>
             </form>
+            <p class="hint" style="text-align:center;margin-top:8px">Ao parar, a posição aberta é fechada a mercado.</p>
         </div>
 
         <div id="mercado" class="tab-content">
             <div class="card">
-                <h3>MERCADO SCALPING (6 ATIVOS)</h3>
-                {% if market_data %}
-                    {% for item in market_data %}
-                    <div class="market-item">
-                        <div>
-                            <b style="font-size: 14px;">{{ item.pair }}</b><br>
-                            <span style="font-size: 11px; color: #94a3b8;">Preço: {{ item.price }} | RSI: {{ item.rsi }}</span>
-                        </div>
-                        <span class="badge-neutral">{{ item.status }}</span>
-                    </div>
-                    {% endfor %}
-                {% else %}
-                    <p style="text-align: center; color: #94a3b8; font-size: 12px;">A carregar cotações...</p>
-                {% endif %}
+                <h3>MERCADO SCALPING ({{ total_pairs }} PARES &lt; 1 USDT)</h3>
+                <p class="sub" id="scan-info" style="margin-bottom:8px"></p>
+                <div id="market-list"><p class="muted">A carregar cotações...</p></div>
             </div>
         </div>
 
         <div id="historico" class="tab-content">
             <div class="card">
                 <h3>REGISTO DE TRADES</h3>
-                <p style="text-align: center; color: #94a3b8; font-size: 12px; margin: 20px 0;">Nenhuma operação fechada ainda.</p>
+                <div id="history-list"><p class="muted">Nenhuma operação fechada ainda.</p></div>
             </div>
         </div>
 
         <div id="ajustes" class="tab-content">
             <div class="card">
-                <h3 style="color: #38bdf8; margin-bottom: 15px;">Configuração & Alavancagem</h3>
-                <form action="/settings" method="POST">
+                <h3 style="margin-bottom: 15px;">Configuração &amp; Alavancagem</h3>
+                <form action="/settings" method="POST" autocomplete="off">
+                    <label>Ambiente da chave:</label>
+                    <select name="mode">
+                        {% for k, v in modes.items() %}<option value="{{ k }}" {% if k == mode %}selected{% endif %}>{{ v }}</option>{% endfor %}
+                    </select>
+                    <p class="hint">A chave tem de ser criada no mesmo ambiente escolhido aqui.</p>
+
                     <label>Bybit API Key:</label>
-                    <input type="text" name="api_key" value="{{ api_key }}">
-                    
+                    <input type="text" name="api_key" value="" placeholder="{{ key_mask if key_mask else 'cola a API Key' }}" autocapitalize="off" autocorrect="off" spellcheck="false">
+
                     <label>Bybit API Secret:</label>
-                    <input type="password" name="api_secret" value="{{ api_secret }}">
-                    
+                    <input type="password" name="api_secret" value="" placeholder="{{ 'guardado ✔ (deixa vazio para manter)' if secret_set else 'cola o API Secret' }}">
+
                     <label>Alavancagem Manual:</label>
                     <input type="number" name="leverage" value="{{ leverage }}" min="1" max="50" required>
-                    
-                    <label class="checkbox-container">
-                        <input type="checkbox" name="is_demo" {% if is_demo %}checked{% endif %}> Ativar Testnet
-                    </label>
-                    
-                    <button type="submit" class="btn-save">Guardar Definições</button>
+
+                    <label>Margem por operação (USDT):</label>
+                    <input type="number" name="margin_usdt" value="{{ margin }}" min="1" step="0.5" required>
+
+                    <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
+                    <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação à Bybit</button>
                 </form>
+                <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta. As chaves ficam só na memória do servidor: se a Render reiniciar, volta a inseri-las (ou define BYBIT_API_KEY / BYBIT_API_SECRET em Environment).</p>
             </div>
+            <a class="logout" href="/logout">Sair do painel</a>
         </div>
 
         <div class="nav-bar">
@@ -202,71 +508,6 @@ HTML_TEMPLATE = """
 </html>
 """
 
-@app.route('/api/state')
-def api_state():
-    return jsonify({
-        "log": str(bot_state["log"]),
-        "last_update": str(bot_state["last_update"])
-    })
 
-@app.route('/')
-def index():
-    return render_template_string(
-        HTML_TEMPLATE,
-        running=bot_state["running"],
-        initial_balance=float(bot_state["initial_balance"]),
-        balance=float(bot_state["balance"]),
-        realized_pnl=float(bot_state["realized_pnl"]),
-        active_position=bot_state["active_position"],
-        market_data=bot_state["market_data"],
-        history=bot_state["history"],
-        api_key=str(bot_state["api_key"]),
-        api_secret=str(bot_state["api_secret"]),
-        leverage=int(bot_state["leverage"]),
-        is_demo=bool(bot_state["is_demo"]),
-        last_update=str(bot_state["last_update"]),
-        log=str(bot_state["log"])
-    )
-
-@app.route('/settings', methods=['POST'])
-def settings():
-    bot_state["api_key"] = str(request.form.get("api_key")).strip()
-    bot_state["api_secret"] = str(request.form.get("api_secret")).strip()
-    bot_state["is_demo"] = True if request.form.get("is_demo") else False
-    try:
-        bot_state["leverage"] = int(request.form.get("leverage"))
-    except:
-        bot_state["leverage"] = LEVERAGE_DEFAULT
-    bot_state["log"] = "Definições guardadas com sucesso."
-    return redirect(url_for('index'))
-
-@app.route('/toggle', methods=['POST'])
-def toggle():
-    if not bot_state["api_key"] or not bot_state["api_secret"]:
-        bot_state["log"] = "Erro: Insira as chaves Bybit em Ajustes!"
-        return redirect(url_for('index'))
-    bot_state["running"] = not bot_state["running"]
-    bot_state["log"] = "ND-SCALPING Ativo (Versão Estável 05h-07h)!" if bot_state["running"] else "ND-SCALPING parado manualmente."
-    return redirect(url_for('index'))
-
-def background_loop():
-    global_exchange = None
-    while True:
-        try:
-            if bot_state["running"]:
-                if not global_exchange:
-                    global_exchange = get_exchange(bot_state)
-                
-                if global_exchange:
-                    execute_trading_logic(global_exchange, bot_state)
-                    bot_state["last_update"] = datetime.datetime.now().strftime("%H:%M:%S")
-            else:
-                global_exchange = None
-        except Exception:
-            global_exchange = None
-        time.sleep(3)
-
-if __name__ == '__main__':
-    t = threading.Thread(target=background_loop, daemon=True)
-    t.start()
-    app.run(host='0.0.0.0', port=5000)
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
