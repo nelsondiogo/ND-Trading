@@ -35,7 +35,7 @@ PAIRS = [f"{b}/USDT:USDT" for b in PAIR_BASES]
 # ============================ PADRÕES DAS DEFINIÇÕES ============================
 # Editáveis depois no separador "Ajustes" do painel.
 LEVERAGE_DEFAULT = _env("LEVERAGE", 17)                  # alavancagem
-MARGIN_DEFAULT_USDT = _env("MARGIN_PER_TRADE_USDT", 20.0)  # margem por operação (USDT)
+MARGIN_DEFAULT_USDT = _env("MARGIN_PER_TRADE_USDT", 5.0)   # margem por operação (USDT): posição = margem x alavancagem
 MODE_DEFAULT = "testnet"                                # testnet | demo | real (muda em Ajustes)
 MARGIN_MODE = "cross"                                    # margem cruzada
 ALLOW_LONG = _env("ALLOW_LONG", 1) == 1
@@ -47,8 +47,10 @@ MIN_VOL_RATIO = _env("MIN_VOL_RATIO", 1.5)               # volume da vela vs mé
 MIN_QUOTE_VOLUME_24H = _env("MIN_VOL", 10000000.0)       # volume 24h mínimo (USDT); ignorado na testnet
 MAX_SPREAD_PCT = _env("MAX_SPREAD_PCT", 0.08)            # spread bid/ask máximo; ignorado na testnet
 MAX_TICK_PCT = _env("MAX_TICK_PCT", 0.05)                # tick do preço, em % do preço
-TOP_N = _env("TOP_N", 25)                                # pares analisados por varredura
-SCAN_INTERVAL_S = _env("SCAN_INTERVAL_S", 2.0)
+TOP_N = _env("TOP_N", 60)                                # pares analisados por varredura (todos os elegíveis)
+TICKER_INTERVAL_S = _env("TICKER_INTERVAL_S", 1.0)       # preços ao vivo no painel (1 pedido por segundo)
+SCAN_INTERVAL_S = _env("SCAN_INTERVAL_S", 3.0)           # velas de 1 min e sinais
+SCAN_BUSY_S = _env("SCAN_BUSY_S", 10.0)                  # varredura mais lenta com posição aberta (prioriza o stop)
 
 # ============================ MATRIZ DE RISCO (LONG; no SHORT é o espelho) ============================
 SL_PCT = _env("SL_PCT", 0.25)                            # stop loss inicial: 0,25% contra a entrada
@@ -64,5 +66,13 @@ COOLDOWN_S = _env("COOLDOWN_S", 45)                      # pausa no par após ga
 COOLDOWN_LOSS_S = _env("COOLDOWN_LOSS_S", 300)           # pausa no par após perda
 MAX_CONSEC_LOSSES = _env("MAX_CONSEC_LOSSES", 4)         # perdas seguidas => pausa geral
 PAUSE_AFTER_LOSSES_S = _env("PAUSE_AFTER_LOSSES_S", 900)
-MAX_DAILY_LOSS_USDT = _env("MAX_DAILY_LOSS_USDT", 30.0)  # para o robô ao atingir esta perda no dia
+MAX_DAILY_LOSS_PCT = _env("MAX_DAILY_LOSS_PCT", 20.0)    # para as entradas ao perder esta % do saldo no dia
 TZ_OFFSET_H = _env("TZ_OFFSET_H", 1)                     # fuso do painel (Angola = UTC+1)
+
+# ============================ SALDO PEQUENO ============================
+BALANCE_USE_PCT = _env("BALANCE_USE_PCT", 90.0)          # máx. % do saldo livre usada como margem (resto = taxas)
+MIN_NOTIONAL_FALLBACK = _env("MIN_NOTIONAL_FALLBACK", 5.0)  # ordem mínima da Bybit (USDT) se o contrato não indicar
+
+# ============================ PAINEL ============================
+CHART_POINTS = _env("CHART_POINTS", 600)                 # pontos do gráfico da ordem aberta (0,5 s cada)
+HISTORY_MAX = _env("HISTORY_MAX", 500)                   # operações guardadas no histórico
