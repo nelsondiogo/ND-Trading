@@ -75,9 +75,10 @@ class _Fatal(Exception):
 
 
 class Engine:
-    def __init__(self, ex, state):
+    def __init__(self, ex, state, gen=0):
         self.ex = ex
         self.st = state
+        self.gen = gen
         self.pairs = []
         self.tick_size = {}
         self.maxlev = {}
@@ -111,11 +112,15 @@ class Engine:
 
     def online(self):
         """A ligação deve continuar (há chaves, sem pedido de reconexão e sem erro fatal)."""
-        return bool(self.st["api_key"]) and not self.st["reconnect"] and not self.fatal_msg
+        return (bool(self.st["api_key"]) and not self.st["reconnect"] and not self.fatal_msg
+                and self.st.get("gen", 0) == self.gen)
 
     def trading(self):
         """O robô pode operar (botão INICIAR ativo)."""
         return self.online() and self.st["running"]
+
+    def step(self, msg):
+        self.st["conn_step"] = msg
 
     def fail(self, msg):
         self.fatal_msg = msg
@@ -166,7 +171,8 @@ class Engine:
     async def prepare(self):
         ex = self.ex
         self.log(f"A ligar à Bybit ({mode_label(self.st['mode'])})...")
-        await ex.load_markets()
+        self.step("1/3 a carregar os mercados")
+        await asyncio.wait_for(ex.load_markets(), 45)
         missing = []
         for s in C.PAIRS:
             m = ex.markets.get(s)
@@ -182,16 +188,19 @@ class Engine:
                 self.min_amt[s] = float((lim.get("amount") or {}).get("min") or 0)
             else:
                 missing.append(s.split("/")[0])
-        if not self.pairs:
-            raise ValueError("Nenhum par da lista existe neste ambiente da Bybit.")
-        await self.refresh_balance()                    # valida a chave (autenticação)
+        self.step("2/3 a ler o saldo (valida a chave)")
+        await asyncio.wait_for(self.refresh_balance(), 25)          # valida a chave (autenticação)
+        self.step("3/3 a preparar")
         try:
-            await ex.set_margin_mode(C.MARGIN_MODE, "BTC/USDT:USDT", {"leverage": int(self.st["leverage"])})
+            await asyncio.wait_for(
+                ex.set_margin_mode(C.MARGIN_MODE, "BTC/USDT:USDT", {"leverage": int(self.st["leverage"])}), 10)
         except Exception:
             pass                                        # já está em cross ou a conta não permite alterar
-        self.st["conn"], self.st["conn_msg"] = "ligado", ""
+        self.st["conn"], self.st["conn_msg"], self.st["conn_step"] = "ligado", "", ""
         extra = f" | sem par nesta conta: {', '.join(missing)}" if missing else ""
         self.log(f"Ligado à Bybit. Saldo {self.st['balance']:.4f} USDT | {len(self.pairs)}/{len(C.PAIRS)} pares{extra}")
+        if not self.pairs:
+            self.log("Aviso: nenhum par da lista existe neste ambiente; a ligação está OK mas não há mercado para mostrar.")
 
     async def refresh_balance(self):
         total, free = read_usdt(await self.ex.fetch_balance())
@@ -233,6 +242,9 @@ class Engine:
     async def ticker_loop(self):
         while self.online():
             try:
+                if not self.pairs:
+                    await self.nap(5)
+                    continue
                 tickers = await self.ex.fetch_tickers(self.pairs)
                 for s in self.pairs:
                     t = tickers.get(s)
@@ -641,42 +653,56 @@ class Engine:
                 await self.nap(1)
 
 
+async def _heartbeat(state, gen):
+    """Batimento do motor: o painel usa-o para saber se o motor está vivo."""
+    while state.get("gen", 0) == gen:
+        state["heartbeat"] = time.time()
+        await asyncio.sleep(1)
+
+
 async def supervisor(state):
     """Mantém a ligação à Bybit sempre que há chaves (saldo, preços, sinais) e reage aos erros."""
-    while True:
-        if not (state["api_key"] and state["api_secret"]):
-            state["conn"], state["conn_msg"] = "sem_chaves", ""
-            await asyncio.sleep(1)
-            continue
-        state["reconnect"] = False
-        state["retry"] = False
-        state["conn"], state["conn_msg"] = "a_ligar", ""
-        ex = None
-        wait = 0
-        try:
-            ex = create_exchange(state)
-            eng = Engine(ex, state)
-            await eng.run()
-            if eng.fatal_msg:
-                raise _Fatal(eng.fatal_msg)
-        except _Fatal as e:
-            state["conn"], state["conn_msg"], state["running"], wait = "erro", str(e), False, 60
-        except Exception as e:
-            msg, fatal = explain_error(e, state.get("mode"))
-            push_log(state, msg)
-            state["conn"], state["conn_msg"] = "erro", msg
-            if fatal:
-                state["running"], wait = False, 60
-            else:
-                wait = 10
-        finally:
-            state["active_position"] = None
-            if ex is not None:
-                try:
-                    await ex.close()
-                except Exception:
-                    pass
-        for _ in range(wait):                              # espera antes de voltar a tentar
-            if state["retry"] or state["reconnect"] or not (state["api_key"] and state["api_secret"]):
-                break
-            await asyncio.sleep(1)
+    gen = state.get("gen", 0)
+    hb = asyncio.create_task(_heartbeat(state, gen))
+    try:
+        while state.get("gen", 0) == gen:
+            if not (state["api_key"] and state["api_secret"]):
+                state["conn"], state["conn_msg"], state["conn_step"] = "sem_chaves", "", ""
+                await asyncio.sleep(1)
+                continue
+            state["reconnect"] = False
+            state["retry"] = False
+            state["conn"], state["conn_msg"], state["conn_step"] = "a_ligar", "", "a iniciar"
+            state["conn_since"] = time.time()
+            ex = None
+            wait = 0
+            try:
+                ex = create_exchange(state)
+                eng = Engine(ex, state, gen)
+                await eng.run()
+                if eng.fatal_msg:
+                    raise _Fatal(eng.fatal_msg)
+            except _Fatal as e:
+                state["conn"], state["conn_msg"], state["running"], wait = "erro", str(e), False, 60
+            except Exception as e:
+                msg, fatal = explain_error(e, state.get("mode"))
+                push_log(state, msg)
+                state["conn"], state["conn_msg"], state["conn_step"] = "erro", msg, ""
+                if fatal:
+                    state["running"], wait = False, 60
+                else:
+                    wait = 10
+            finally:
+                state["active_position"] = None
+                if ex is not None:
+                    try:
+                        await ex.close()
+                    except Exception:
+                        pass
+            for _ in range(wait):                          # espera antes de voltar a tentar
+                if (state["retry"] or state["reconnect"] or state.get("gen", 0) != gen
+                        or not (state["api_key"] and state["api_secret"])):
+                    break
+                await asyncio.sleep(1)
+    finally:
+        hb.cancel()
