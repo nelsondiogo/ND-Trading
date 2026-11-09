@@ -14,7 +14,7 @@ from collections import deque
 from datetime import datetime, timedelta, timezone
 
 import config as C
-from exchange_management import create_exchange, explain_error, mode_label, read_usdt, ZERO_HINT
+from exchange_management import create_exchange, explain_error, mode_label, read_equity, read_usdt, ZERO_HINT
 
 TZ = timezone(timedelta(hours=C.TZ_OFFSET_H))
 
@@ -84,6 +84,7 @@ class Engine:
         self.maxlev = {}
         self.min_cost = {}
         self.min_amt = {}
+        self.amt_step = {}
         self.tick = {}            # último ticker de cada par
         self.ana = {}             # última análise de cada par
         self.candidates = []
@@ -144,9 +145,33 @@ class Engine:
     def lev_for(self, symbol):
         return max(1, min(int(self.st["leverage"]), self.maxlev.get(symbol, 999)))
 
-    def margin_eff(self):
-        """Margem realmente usada: a definida em Ajustes, limitada a BALANCE_USE_PCT do saldo livre."""
-        return max(0.0, min(float(self.st["margin_usdt"]), self.free * C.BALANCE_USE_PCT / 100))
+    def max_notional(self, symbol):
+        """Maior posição (USDT) permitida: a margem definida em Ajustes x alavancagem, limitada pelo saldo livre
+        (margem + reserva de taxas de abrir e fechar), usando no máximo BALANCE_USE_PCT dele."""
+        lev = self.lev_for(symbol)
+        by_setting = float(self.st["margin_usdt"]) * lev
+        by_balance = self.free * C.BALANCE_USE_PCT / 100 / (1.0 / lev + C.FEE_RESERVE_PCT / 100)
+        return max(0.0, min(by_setting, by_balance))
+
+    def plan_amount(self, symbol, price):
+        """(quantidade, posição em USDT) que cumpre o mínimo da Bybit, o passo do contrato e o saldo; None se não der."""
+        try:
+            need = self.need_notional(symbol, price)
+            cap = self.max_notional(symbol)
+            if cap < need:
+                return None
+            min_amt = self.min_amt.get(symbol, 0)
+            step = self.amt_step.get(symbol) or min_amt
+            amount = float(self.ex.amount_to_precision(symbol, cap / price))
+            if amount * price < need and step > 0:                 # o arredondamento ficou abaixo do mínimo: sobe 1 passo
+                bumped = float(self.ex.amount_to_precision(symbol, amount + step))
+                if bumped * price <= cap * 1.025:                  # a folga do saldo (4%) cobre os 2,5%
+                    amount = bumped
+            if amount <= 0 or amount < min_amt or amount * price < need - 1e-9:
+                return None
+            return amount, amount * price
+        except Exception:
+            return None
 
     def need_notional(self, symbol, price):
         return max(self.min_cost.get(symbol, C.MIN_NOTIONAL_FALLBACK), self.min_amt.get(symbol, 0.0) * price)
@@ -162,9 +187,8 @@ class Engine:
                 return False, "SPREAD LARGO"
         if self.tick_size.get(sym, 0) / price * 100 > C.MAX_TICK_PCT:
             return False, "TICK GRANDE"
-        need = self.need_notional(sym, price)
-        if self.margin_eff() * self.lev_for(sym) < need * 1.02:
-            return False, f"MÍN. ORDEM {need:.1f} USDT"
+        if self.plan_amount(sym, price) is None:
+            return False, f"MÍN. ORDEM {self.need_notional(sym, price):.1f} USDT"
         return True, ""
 
     # ------------------------- arranque -------------------------
@@ -186,6 +210,7 @@ class Engine:
                 mc = float((lim.get("cost") or {}).get("min") or 0)
                 self.min_cost[s] = mc if mc >= 1 else C.MIN_NOTIONAL_FALLBACK
                 self.min_amt[s] = float((lim.get("amount") or {}).get("min") or 0)
+                self.amt_step[s] = float((m.get("precision") or {}).get("amount") or 0)
             else:
                 missing.append(s.split("/")[0])
         self.step("2/3 a ler o saldo (valida a chave)")
@@ -203,7 +228,9 @@ class Engine:
             self.log("Aviso: nenhum par da lista existe neste ambiente; a ligação está OK mas não há mercado para mostrar.")
 
     async def refresh_balance(self):
-        total, free = read_usdt(await self.ex.fetch_balance())
+        b = await self.ex.fetch_balance()
+        total, free = read_usdt(b)
+        self.st["equity"], self.st["avail"] = read_equity(b)
         self.free = free
         self.st["balance"] = total
         self.st["free"] = free
@@ -401,14 +428,16 @@ class Engine:
             return
 
         lev = self.lev_for(symbol)                         # respeita o máximo do contrato
-        margin = self.margin_eff()                         # saldo pequeno: no máx. 90% do saldo livre
         price = c[-1][4]
         need = self.need_notional(symbol, price)
-        if margin * lev < need * 1.02:
-            self.warn_once("min", f"Saldo insuficiente: a ordem mínima de {coin} é {need:.1f} USDT; "
-                                  f"com {lev}x e {margin:.2f} USDT de margem só dá {margin * lev:.2f} USDT.")
+        plan = self.plan_amount(symbol, price)             # tamanho exato: mínimo da Bybit, passo do contrato e saldo
+        if plan is None:
+            ratio = 1.0 / lev + C.FEE_RESERVE_PCT / 100
+            self.warn_once("min", f"Saldo insuficiente: a ordem mínima de {coin} é {need:.2f} USDT; com {lev}x precisas de "
+                                  f"~{need * ratio / (C.BALANCE_USE_PCT / 100):.3f} USDT livres e tens {self.free:.4f}.")
             self.cooldown[symbol] = time.time() + 120
             return
+        amount, notional = plan
 
         if (symbol, lev) not in self.lev_ok:
             try:
@@ -420,13 +449,20 @@ class Engine:
                     return
             self.lev_ok.add((symbol, lev))
 
-        amount = float(ex.amount_to_precision(symbol, margin * lev / price))
-        if amount <= 0 or amount < self.min_amt.get(symbol, 0) or amount * price < need:
-            self.log(f"{coin}: tamanho abaixo do mínimo do contrato com a margem atual")
-            self.cooldown[symbol] = time.time() + 600
-            return
-
-        await ex.create_order(symbol, "market", "buy" if d > 0 else "sell", amount)
+        order_side = "buy" if d > 0 else "sell"
+        try:
+            await ex.create_order(symbol, "market", order_side, amount)
+        except Exception as e:
+            msg = explain_error(e, self.st["mode"])[0]
+            if not msg.startswith("Saldo insuficiente"):
+                raise
+            smaller = float(ex.amount_to_precision(symbol, amount * 0.97))     # uma nova tentativa com ~3% menos
+            if smaller >= amount or smaller < self.min_amt.get(symbol, 0) or smaller * price < need:
+                self.log(f"{coin}: {msg}")
+                self.cooldown[symbol] = time.time() + 120
+                return
+            amount = smaller
+            await ex.create_order(symbol, "market", order_side, amount)
         t_open = time.time()
 
         pos = None
@@ -452,7 +488,7 @@ class Engine:
             self.log(f"SL/TP falhou ({str(e)[:60]}) — a fechar por segurança")
             await self.close(symbol, "sem proteção")
             return
-        self.log(f"ENTRADA {side.upper()} {coin} @ {fmt(entry)} | SL {fmt(sl)} | TP {fmt(tp)} | {lev}x | margem {margin:.4f}")
+        self.log(f"ENTRADA {side.upper()} {coin} @ {fmt(entry)} | SL {fmt(sl)} | TP {fmt(tp)} | {lev}x | margem {notional / lev:.4f}")
         await self.manage(symbol, d, entry, size, sl, tp, entry, lev, t_open)
 
     async def manage(self, symbol, d, entry, size, last_sl, tp, best, lev, opened_ts=None):
@@ -643,6 +679,7 @@ class Engine:
             except Exception as e:
                 msg, fatal = explain_error(e, self.st["mode"])
                 self.log(f"Erro em {sym.split('/')[0]}: {msg}")
+                self.cooldown[sym] = time.time() + 30          # não repete o mesmo par de imediato
                 try:
                     await self.close(sym, "erro")
                 except Exception:
