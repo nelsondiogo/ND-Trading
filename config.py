@@ -43,25 +43,25 @@ ALLOW_SHORT = _env("ALLOW_SHORT", 1) == 1
 
 # ============================ FILTRO PRÉ-ENTRADA ============================
 MAX_1M_MOVE_PCT = _env("MAX_1M_MOVE_PCT", 1.5)           # rejeita amplitude > 1,5% numa vela de 1 min
-MIN_VOL_RATIO = _env("MIN_VOL_RATIO", 1.5)               # volume da vela vs média das 20 anteriores
+MIN_VOL_RATIO = _env("MIN_VOL_RATIO", 0.0)               # volume da vela vs mediana das 20 anteriores (0 = desligado)
 MIN_QUOTE_VOLUME_24H = _env("MIN_VOL", 10000000.0)       # volume 24h mínimo (USDT); ignorado na testnet
 MAX_SPREAD_PCT = _env("MAX_SPREAD_PCT", 0.08)            # spread bid/ask máximo; ignorado na testnet
-MAX_TICK_PCT = _env("MAX_TICK_PCT", 0.05)                # tick do preço, em % do preço
+MAX_TICK_PCT = _env("MAX_TICK_PCT", 0.10)                # tick do preço, em % do preço
 TOP_N = _env("TOP_N", 60)                                # pares analisados por varredura (todos os elegíveis)
 TICKER_INTERVAL_S = _env("TICKER_INTERVAL_S", 1.0)       # preços ao vivo no painel (1 pedido por segundo)
 SCAN_INTERVAL_S = _env("SCAN_INTERVAL_S", 3.0)           # velas de 1 min e sinais
 SCAN_BUSY_S = _env("SCAN_BUSY_S", 10.0)                  # varredura mais lenta com posição aberta (prioriza o stop)
 
 # ============================ MATRIZ DE RISCO (LONG; no SHORT é o espelho) ============================
-SL_PCT = _env("SL_PCT", 0.25)                            # stop loss inicial: 0,25% contra a entrada
+SL_PCT = _env("SL_PCT", 0.50)                            # stop loss inicial: 0,50% contra a entrada (aguenta o ruído do mercado)
 TP_PCT = _env("TP_PCT", 0.95)                            # take profit inicial: 0,95% a favor
-TRAIL_TRIGGER_PCT = _env("TRAIL_TRIGGER_PCT", 0.45)      # lucro que ativa o stop rígido "Dinamite"
+TRAIL_TRIGGER_PCT = _env("TRAIL_TRIGGER_PCT", 0.12)      # a este lucro a favor, o stop trava rígido no cume (nenhum recuo)
 TRAIL_DISTANCE_PCT = _env("TRAIL_DISTANCE_PCT", 0.0)     # 0 = stop rígido exatamente no cume
-REVERSAL_DROP_PCT = _env("REVERSAL_DROP_PCT", 0.18)      # inversão brusca ANTES da Dinamite => fecha
-REVERSAL_WINDOW_S = _env("REVERSAL_WINDOW_S", 6)
+REVERSAL_DROP_PCT = _env("REVERSAL_DROP_PCT", 0.35)      # choque brusco contra a posição ANTES da trava => fecha
+REVERSAL_WINDOW_S = _env("REVERSAL_WINDOW_S", 8)
 
 # ============================ CONTROLO ============================
-POLL_INTERVAL_S = _env("POLL_INTERVAL_S", 0.5)           # leitura de preço com posição aberta
+POLL_INTERVAL_S = _env("POLL_INTERVAL_S", 0.3)           # leitura de preço com posição aberta
 COOLDOWN_S = _env("COOLDOWN_S", 45)                      # pausa no par após ganho
 COOLDOWN_LOSS_S = _env("COOLDOWN_LOSS_S", 300)           # pausa no par após perda
 MAX_CONSEC_LOSSES = _env("MAX_CONSEC_LOSSES", 4)         # perdas seguidas => pausa geral
