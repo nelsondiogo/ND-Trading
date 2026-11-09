@@ -45,11 +45,13 @@ def analyze(c):
     res = {"side": None, "trend": "—", "score": 0.0, "move": 0.0, "vr": 0.0, "chg1m": 0.0, "status": "SEM DADOS"}
     if not c or len(c) < 24:
         return res
+    c = sorted(c, key=lambda k: k[0])                      # garante a ordem cronológica
     cur, prev = c[-1], c[-2]
     hist = c[-22:-2]
     res["move"] = max((k[2] - k[3]) / k[3] * 100 for k in (cur, prev))
-    avg = sum(k[5] for k in hist) / len(hist)
-    res["vr"] = prev[5] / avg if avg > 0 else 0.0
+    vols = sorted(k[5] for k in hist)
+    ref = vols[len(vols) // 2] or (sum(vols) / len(vols))   # mediana (um pico antigo não distorce)
+    res["vr"] = prev[5] / ref if ref > 0 else 0.0
     res["chg1m"] = (cur[4] - cur[1]) / cur[1] * 100 if cur[1] else 0.0
 
     c3, c2, c1 = c[-3][4], prev[4], cur[4]                 # três fechos seguidos
@@ -63,10 +65,10 @@ def analyze(c):
     if (trend == "LONG" and not C.ALLOW_LONG) or (trend == "SHORT" and not C.ALLOW_SHORT):
         res["status"] = "DESATIVADO"
         return res
-    if res["vr"] < C.MIN_VOL_RATIO:
+    if C.MIN_VOL_RATIO > 0 and res["vr"] < C.MIN_VOL_RATIO:
         res["status"] = "VOL BAIXO"
         return res
-    res.update(side=trend.lower(), status="SINAL", score=res["vr"] * abs(c1 - c3) / c3 * 100)
+    res.update(side=trend.lower(), status="SINAL", score=(0.5 + res["vr"]) * abs(c1 - c3) / c3 * 100)
     return res
 
 
@@ -119,6 +121,16 @@ class Engine:
     def trading(self):
         """O robô pode operar (botão INICIAR ativo)."""
         return self.online() and self.st["running"]
+
+    # parâmetros de risco: vêm do painel (Ajustes) e valem para a próxima operação
+    def p_sl(self):
+        return float(self.st.get("sl_pct", C.SL_PCT))
+
+    def p_tp(self):
+        return float(self.st.get("tp_pct", C.TP_PCT))
+
+    def p_trail(self):
+        return float(self.st.get("trail_pct", C.TRAIL_TRIGGER_PCT))
 
     def step(self, msg):
         self.st["conn_step"] = msg
@@ -234,6 +246,8 @@ class Engine:
         self.free = free
         self.st["balance"] = total
         self.st["free"] = free
+        if not self.st["active_position"]:
+            self.st["free_idle"] = free                 # saldo sem posição aberta (para mostrar o tamanho da próxima ordem)
         if not self.st["initial_balance"]:
             self.st["initial_balance"] = total
         if self.day_balance <= 0 and total > 0:
@@ -480,8 +494,8 @@ class Engine:
             return
         entry, size = pos["entry"], pos["size"]
 
-        sl = entry * (1 - d * C.SL_PCT / 100)              # long: abaixo | short: acima
-        tp = entry * (1 + d * C.TP_PCT / 100)              # long: acima  | short: abaixo
+        sl = entry * (1 - d * self.p_sl() / 100)           # long: abaixo | short: acima
+        tp = entry * (1 + d * self.p_tp() / 100)           # long: acima  | short: abaixo
         try:
             await self.set_stop(symbol, stopLoss=sl, takeProfit=tp)
         except Exception as e:
@@ -552,10 +566,10 @@ class Engine:
                 "sl": fmt(last_sl), "tp": fmt(tp), "trailing": trailing,
             }
 
-            # Stop "Dinamite": a partir do gatilho, STOP RÍGIDO no cume do melhor preço
-            if not trailing and d * (best - entry) / entry * 100 >= C.TRAIL_TRIGGER_PCT:
+            # TRAVA RÍGIDA: ao atingir o lucro definido, o stop fixa-se no cume do melhor preço e não aceita recuo
+            if not trailing and d * (best - entry) / entry * 100 >= self.p_trail():
                 trailing = True
-                self.log(f"DINAMITE ativado em {coin}: stop rígido no cume {fmt(best)}")
+                self.log(f"TRAVA ativada em {coin} a +{self.p_trail():g}%: stop rígido no cume {fmt(best)}")
             if trailing:
                 level = best * (1 - d * C.TRAIL_DISTANCE_PCT / 100)    # 0% = exatamente o cume
                 if d * (p - level) < 0:                                # qualquer tick contra => fecha já
@@ -573,7 +587,7 @@ class Engine:
                         await self.close(symbol, reason)
                         break
             else:
-                # Antes da Dinamite: proteção de inversão brusca dentro da janela
+                # Antes da trava: proteção contra choque brusco dentro da janela
                 ref = max(x for _, x in window) if d > 0 else min(x for _, x in window)
                 if d * (ref - p) / ref * 100 >= C.REVERSAL_DROP_PCT:
                     reason = "Inversão brusca"
@@ -637,10 +651,10 @@ class Engine:
                 continue
             entry = float(p["entryPrice"])
             d = 1 if p.get("side") == "long" else -1
-            tp = entry * (1 + d * C.TP_PCT / 100)
+            tp = entry * (1 + d * self.p_tp() / 100)
             last_sl = float(p.get("stopLossPrice") or 0)
             if last_sl <= 0:
-                last_sl = entry * (1 - d * C.SL_PCT / 100)
+                last_sl = entry * (1 - d * self.p_sl() / 100)
                 await self.set_stop(sym, stopLoss=last_sl, takeProfit=tp)
             last = (await self.ex.fetch_ticker(sym))["last"]
             best = last if d * (last - entry) > 0 else entry
