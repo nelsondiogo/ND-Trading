@@ -62,13 +62,34 @@ def read_usdt(b):
     except (KeyError, IndexError, TypeError):
         acc = None
     if isinstance(acc, dict):
+        avail = _num(acc.get("totalAvailableBalance"))
         if total <= 0:
             total = float(acc.get("totalEquity") or 0)
         if free <= 0:
-            free = float(acc.get("totalAvailableBalance") or 0)
-    if free <= 0 < total:
+            free = avail or 0.0
+        elif avail is not None:
+            free = min(free, avail)        # é o que a Bybit realmente deixa usar como margem
+    if free <= 0 < total and not isinstance(acc, dict):
         free = total                       # conta sem posições abertas
     return total, free
+
+
+def _num(x):
+    try:
+        return float(x) if x not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def read_equity(b):
+    """(património total, saldo disponível) em USD, como a Bybit os mostra; None se não existirem."""
+    try:
+        acc = b["info"]["result"]["list"][0]
+    except (KeyError, IndexError, TypeError):
+        return None, None
+    if not isinstance(acc, dict):
+        return None, None
+    return _num(acc.get("totalEquity")), _num(acc.get("totalAvailableBalance"))
 
 
 ZERO_HINT = ("O saldo de trading é 0. Confirma que o USDT está na conta Unified Trading "
@@ -166,27 +187,35 @@ def explain_error(e, mode="testnet"):
     low = s.lower()
     label = mode_label(mode)
 
+    def code(n):
+        return re.search(rf"(?<!\d){n}(?!\d)", s) is not None
+
     if isinstance(e, ValueError):
         return s, True
+    if (code(110007) or code(110004) or code(110012) or "not enough for new order" in low
+            or "insufficient available balance" in low or "insufficient balance" in low):
+        return "Saldo insuficiente para abrir a ordem (margem + taxas). Aumenta o saldo ou a alavancagem.", False
+    if code(110094) or "minimum order value" in low or "does not meet the minimum" in low:
+        return "A ordem ficou abaixo do valor mínimo da Bybit (cerca de 5 USDT de posição).", False
     if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
         return ("A Bybit não respondeu a tempo. Confirma que o serviço da Render está na Region Frankfurt "
                 "ou Singapore (não nos EUA) e usa o botão Diagnóstico."), False
-    if "10010" in s or "unmatched ip" in low:
+    if code(10010) or "unmatched ip" in low:
         return ("A chave tem restrição de IP. Cria a chave sem restrição de IP "
                 "(o IP da Render muda) e cola-a de novo em Ajustes."), True
-    if "10004" in s or "error sign" in low or "signature" in low:
+    if code(10004) or "error sign" in low or "signature" in low:
         return "API Secret errado (assinatura inválida). Copia o Secret de novo, sem espaços.", True
-    if "10005" in s or isinstance(e, E.PermissionDenied) or "permission denied" in low:
+    if code(10005) or isinstance(e, E.PermissionDenied) or "permission denied" in low:
         return "A chave não tem permissão. Ativa Leitura + Negociação de Contratos (Contract Trade).", True
-    if "10003" in s or "api key is invalid" in low or "invalid api" in low or isinstance(e, E.AuthenticationError):
+    if code(10003) or "api key is invalid" in low or "invalid api" in low or isinstance(e, E.AuthenticationError):
         return (f"API Key inválida para o modo «{label}». A chave tem de ser criada no mesmo ambiente: "
                 "Testnet (testnet.bybit.com), Demo Trading ou conta real. Confirma também a opção em Ajustes."), True
     if "cloudfront" in low or "block access" in low or re.search(r"\b403\b", s) or "forbidden" in low:
         return ("A Bybit bloqueou o IP do servidor (regiões como os EUA são bloqueadas). "
                 "Cria o serviço na Render com a Region = Frankfurt."), True
-    if "10002" in s or "timestamp" in low or "recv_window" in low:
+    if code(10002) or "timestamp" in low or "recv_window" in low:
         return "Relógio fora de sincronia com a Bybit. A tentar de novo.", False
-    if "10006" in s or "too many" in low or isinstance(e, E.RateLimitExceeded):
+    if code(10006) or "too many" in low or isinstance(e, E.RateLimitExceeded):
         return "Limite de pedidos da Bybit atingido. A abrandar.", False
     if isinstance(e, E.NetworkError):
         return "Sem ligação à Bybit (rede/timeout). A tentar de novo.", False
