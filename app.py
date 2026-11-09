@@ -47,6 +47,8 @@ bot_state = {
     "leverage": int(C.LEVERAGE_DEFAULT),
     "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
     "retry": False,
+    "equity": None,
+    "avail": None,
     "gen": 0,                      # geração do motor (o vigia pode substituir um motor preso)
     "heartbeat": 0.0,
     "conn_step": "",
@@ -237,7 +239,8 @@ h1{color:#22c55e;text-align:center;font-size:16px;letter-spacing:1.5px;margin-to
 p{font-size:13px;color:#cbd5e1;line-height:1.5}
 input{width:100%;padding:12px;margin:8px 0;border-radius:6px;border:1px solid #1e293b;background:#0b0f19;color:#fff;box-sizing:border-box;font-size:14px}
 button{width:100%;padding:13px;border:none;border-radius:8px;background:#22c55e;color:#fff;font-weight:800;letter-spacing:1px;font-size:13px;margin-top:6px}
-.err{color:#f87171;font-size:12px;margin:6px 0}"""
+.err{color:#f87171;font-size:12px;margin:6px 0}
+.warn{color:#f59e0b;font-size:12px;line-height:1.5;margin:10px 0 0 0}"""
 
 LOGIN_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
@@ -245,7 +248,7 @@ LOGIN_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <body><div class="box"><h1>ND-SCALPING</h1>
 <form method="POST"><input type="password" name="password" placeholder="Palavra-passe do painel" autofocus required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
-<button type="submit">ENTRAR</button></form></div></body></html>"""
+<button type="submit">ENTRAR</button></form>{% if not persistent %}<p class="warn">Armazenamento temporário: sempre que a Render reiniciar, a palavra-passe e as chaves apagam-se e tens de as criar de novo. Para não repetir, adiciona um Disk na Render com Mount Path /var/data.</p>{% endif %}</div></body></html>"""
 
 SETUP_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
@@ -256,7 +259,7 @@ SETUP_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <input type="password" name="password" placeholder="Palavra-passe (mínimo 8 caracteres)" minlength="8" autofocus required>
 <input type="password" name="password2" placeholder="Repetir palavra-passe" minlength="8" required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
-<button type="submit">CRIAR E ENTRAR</button></form></div></body></html>"""
+<button type="submit">CRIAR E ENTRAR</button></form>{% if not persistent %}<p class="warn">Armazenamento temporário: sempre que a Render reiniciar, a palavra-passe e as chaves apagam-se e tens de as criar de novo. Para não repetir, adiciona um Disk na Render com Mount Path /var/data.</p>{% endif %}</div></body></html>"""
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -280,7 +283,7 @@ def setup():
             session.permanent = True
             push_log(bot_state, "Palavra-passe criada. Insere as chaves da Bybit em Ajustes.")
             return redirect(url_for("index"))
-    return render_template_string(SETUP_HTML, error=error)
+    return render_template_string(SETUP_HTML, error=error, persistent=PERSISTENT)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -303,7 +306,7 @@ def login():
         else:
             _fail(ip)
             error = "Palavra-passe incorreta."
-    return render_template_string(LOGIN_HTML, error=error)
+    return render_template_string(LOGIN_HTML, error=error, persistent=PERSISTENT)
 
 
 @app.route("/password", methods=["POST"])
@@ -390,7 +393,9 @@ def snapshot(tab=""):
     s = bot_state
     free = float(s["free"] or 0)
     lev = int(s["leverage"])
-    margin_eff = min(float(s["margin_usdt"]), free * C.BALANCE_USE_PCT / 100) if free > 0 else 0.0
+    ratio = 1.0 / max(1, lev) + C.FEE_RESERVE_PCT / 100
+    notional = max(0.0, min(float(s["margin_usdt"]) * lev, free * C.BALANCE_USE_PCT / 100 / ratio)) if free > 0 else 0.0
+    margin_eff = notional / max(1, lev)
     d = {
         "running": s["running"],
         "conn": s["conn"],
@@ -400,9 +405,11 @@ def snapshot(tab=""):
         "leverage": lev,
         "margin_usdt": s["margin_usdt"],
         "margin_eff": round(margin_eff, 4),
-        "notional": round(margin_eff * lev, 2),
+        "notional": round(notional, 2),
         "min_notional": C.MIN_NOTIONAL_FALLBACK,
-        "min_balance": round(C.MIN_NOTIONAL_FALLBACK / max(1, lev) / (C.BALANCE_USE_PCT / 100), 3),
+        "min_balance": round(C.MIN_NOTIONAL_FALLBACK * ratio / (C.BALANCE_USE_PCT / 100), 3),
+        "equity": s["equity"],
+        "avail": s["avail"],
         "balance": s["balance"],
         "initial_balance": s["initial_balance"],
         "free": s["free"],
@@ -681,6 +688,7 @@ HTML_TEMPLATE = """
             setText('lev-info', 'Margem por operação: ' + money(d.margin_usdt, 2) + ' USDT (usa até ' + money(d.margin_eff, 4) + ' do saldo livre)');
             setText('lev-info2', 'Posição = margem × ' + d.leverage + 'x = ' + money(d.notional, 2) + ' USDT');
             setText('free', 'Saldo livre: ' + money(d.free, 4) + ' USDT');
+            setText('equity', d.equity != null ? ('Património na Bybit: ' + money(d.equity, 2) + ' USD | disponível ' + money(d.avail, 2)) : '');
             var w = document.getElementById('size-warn');
             if (d.conn === 'ligado' && d.notional < d.min_notional) {
                 w.style.display = 'block';
@@ -901,6 +909,7 @@ HTML_TEMPLATE = """
                 <p class="sub" id="lev-info"></p>
                 <p class="sub" id="lev-info2"></p>
                 <p class="sub" id="free"></p>
+                <p class="sub" id="equity"></p>
                 <div class="warnbox" id="size-warn" style="display:none"></div>
             </div>
 
@@ -970,7 +979,7 @@ HTML_TEMPLATE = """
 
                     <label>Margem por operação (USDT):</label>
                     <input type="number" name="margin_usdt" value="{{ margin }}" min="0.1" step="0.1" required>
-                    <p class="hint">É a <b>margem</b>: o valor do teu saldo que entra em cada operação. A posição é multiplicada pela alavancagem (margem × alavancagem). Ex.: 5 USDT × 18x = 90 USDT. Se o saldo livre for menor, o robô usa no máximo 90% dele.</p>
+                    <p class="hint">É a <b>margem</b>: o valor do teu saldo que entra em cada operação. A posição é multiplicada pela alavancagem (margem × alavancagem). Ex.: 5 USDT × 18x = 90 USDT. Se o saldo livre for menor, o robô usa no máximo 96% dele (o resto cobre as taxas).</p>
 
                     <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
                     <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação (resultado no Dashboard)</button>
