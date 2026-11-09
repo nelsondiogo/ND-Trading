@@ -47,6 +47,10 @@ bot_state = {
     "leverage": int(C.LEVERAGE_DEFAULT),
     "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
     "retry": False,
+    "sl_pct": C.SL_PCT,
+    "tp_pct": C.TP_PCT,
+    "trail_pct": C.TRAIL_TRIGGER_PCT,
+    "free_idle": 0.0,
     "equity": None,
     "avail": None,
     "gen": 0,                      # geração do motor (o vigia pode substituir um motor preso)
@@ -137,6 +141,14 @@ def has_password():
     return bool(_store.get("pw_hash"))
 
 
+def _local_fernet():
+    """Painel SEM palavra-passe: as chaves guardadas em disco são cifradas com uma chave local que fica
+    ao lado delas (só evita guardá-las em texto simples; a proteção a sério é ativar a palavra-passe)."""
+    if not _store.get("local_key"):
+        _store["local_key"] = Fernet.generate_key().decode()
+    return Fernet(_store["local_key"].encode())
+
+
 def check_password(pw):
     return has_password() and hmac.compare_digest(_pw_hash(pw, _store["pw_salt"]), _store["pw_hash"])
 
@@ -154,8 +166,9 @@ def store_credentials():
 
 
 def persist():
-    """Guarda em disco as preferências (ambiente, alavancagem, margem) e as chaves cifradas."""
-    _store.update(mode=bot_state["mode"], leverage=bot_state["leverage"], margin_usdt=bot_state["margin_usdt"])
+    """Guarda em disco as preferências (ambiente, alavancagem, margem, SL/TP/trava) e as chaves cifradas."""
+    _store.update(mode=bot_state["mode"], leverage=bot_state["leverage"], margin_usdt=bot_state["margin_usdt"],
+                  sl_pct=bot_state["sl_pct"], tp_pct=bot_state["tp_pct"], trail_pct=bot_state["trail_pct"])
     return _save()
 
 
@@ -166,9 +179,38 @@ def set_password(pw):
         _store["pw_salt"] = secrets.token_hex(16)
         _store["pw_hash"] = _pw_hash(pw, _store["pw_salt"])
         _store["enc_salt"] = secrets.token_hex(16)
+        _store.pop("local_key", None)
         _fernet = _make_fernet(pw, _store["enc_salt"])
         store_credentials()
         _save()
+
+
+def remove_password():
+    """Remove a palavra-passe: o painel fica aberto e as chaves passam a usar a cifra local."""
+    global _fernet
+    with _lock:
+        for k in ("pw_salt", "pw_hash", "enc_salt"):
+            _store.pop(k, None)
+        _fernet = _local_fernet()
+        store_credentials()
+        _save()
+
+
+def _init_open_mode():
+    """Sem palavra-passe: carrega logo as chaves guardadas (o robô liga sozinho depois de um reinício com Disk)."""
+    global _fernet
+    if has_password():
+        return
+    _fernet = _local_fernet()
+    token = _store.get("creds")
+    if not token:
+        return
+    try:
+        c = json.loads(_fernet.decrypt(token.encode()).decode())
+        bot_state["api_key"], bot_state["api_secret"] = c["k"], c["s"]
+        push_log(bot_state, "Chaves da Bybit carregadas do disco.")
+    except (InvalidToken, ValueError, KeyError):
+        push_log(bot_state, "Não consegui ler as chaves guardadas. Insere-as de novo em Ajustes.")
 
 
 def unlock(pw):
@@ -193,13 +235,31 @@ def _apply_prefs():
         bot_state["mode"] = _store["mode"]
     try:
         bot_state["leverage"] = max(1, min(50, int(_store.get("leverage", bot_state["leverage"]))))
-        bot_state["margin_usdt"] = max(1.0, float(_store.get("margin_usdt", bot_state["margin_usdt"])))
+        bot_state["margin_usdt"] = max(0.1, float(_store.get("margin_usdt", bot_state["margin_usdt"])))
+        bot_state["sl_pct"] = min(5.0, max(0.05, float(_store.get("sl_pct", bot_state["sl_pct"]))))
+        bot_state["tp_pct"] = min(20.0, max(0.1, float(_store.get("tp_pct", bot_state["tp_pct"]))))
+        bot_state["trail_pct"] = min(5.0, max(0.03, float(_store.get("trail_pct", bot_state["trail_pct"]))))
     except (TypeError, ValueError):
         pass
 
 
+def _env_credentials():
+    """Opcional: chaves nas variáveis de ambiente da Render (BYBIT_API_KEY, BYBIT_API_SECRET, BYBIT_MODE).
+    Servem para não voltar a inserir as chaves depois de cada deploy/reinício, mesmo sem Disk."""
+    if bot_state["api_key"] and bot_state["api_secret"]:
+        return
+    k, sec = os.getenv("BYBIT_API_KEY", "").strip(), os.getenv("BYBIT_API_SECRET", "").strip()
+    if k and sec:
+        bot_state["api_key"], bot_state["api_secret"] = k, sec
+        if os.getenv("BYBIT_MODE", "") in MODES:
+            bot_state["mode"] = os.getenv("BYBIT_MODE")
+        push_log(bot_state, "Chaves da Bybit lidas das variáveis de ambiente.")
+
+
 _load()
 _apply_prefs()
+_init_open_mode()
+_env_credentials()
 
 _fails = {}
 
@@ -225,10 +285,10 @@ def login_required(fn):
     @wraps(fn)
     def wrapper(*a, **kw):
         ensure_bot()
-        if not has_password() or not session.get("ok"):
+        if has_password() and not session.get("ok"):          # sem palavra-passe, o painel está aberto
             if request.path.startswith("/api/"):
                 return jsonify({"error": "login"}), 401
-            return redirect(url_for("login" if has_password() else "setup"))
+            return redirect(url_for("login"))
         return fn(*a, **kw)
     return wrapper
 
@@ -254,12 +314,12 @@ SETUP_HTML = """<!DOCTYPE html><html lang="pt"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><title>ND-SCALPING</title>
 <style>""" + _PAGE_CSS + """</style></head>
 <body><div class="box"><h1>ND-SCALPING</h1>
-<p><b>Primeiro acesso.</b> Cria a palavra-passe do painel. Ela protege o painel e cifra as chaves da Bybit que guardares em Ajustes.</p>
+<p><b>Ativar palavra-passe (opcional).</b> Ela protege o painel e cifra as chaves da Bybit guardadas em Ajustes.</p>
 <form method="POST">
 <input type="password" name="password" placeholder="Palavra-passe (mínimo 8 caracteres)" minlength="8" autofocus required>
 <input type="password" name="password2" placeholder="Repetir palavra-passe" minlength="8" required>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
-<button type="submit">CRIAR E ENTRAR</button></form>{% if not persistent %}<p class="warn">Armazenamento temporário: sempre que a Render reiniciar, a palavra-passe e as chaves apagam-se e tens de as criar de novo. Para não repetir, adiciona um Disk na Render com Mount Path /var/data.</p>{% endif %}</div></body></html>"""
+<button type="submit">ATIVAR</button></form>{% if not persistent %}<p class="warn">Armazenamento temporário: sempre que a Render reiniciar, a palavra-passe e as chaves apagam-se e tens de as criar de novo. Para não repetir, adiciona um Disk na Render com Mount Path /var/data.</p>{% endif %}</div></body></html>"""
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -281,7 +341,7 @@ def setup():
             session.clear()
             session["ok"] = True
             session.permanent = True
-            push_log(bot_state, "Palavra-passe criada. Insere as chaves da Bybit em Ajustes.")
+            push_log(bot_state, "Palavra-passe do painel ativada.")
             return redirect(url_for("index"))
     return render_template_string(SETUP_HTML, error=error, persistent=PERSISTENT)
 
@@ -289,7 +349,7 @@ def setup():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if not has_password():
-        return redirect(url_for("setup"))
+        return redirect(url_for("index"))
     error = None
     if request.method == "POST":
         ip = _ip()
@@ -330,10 +390,29 @@ def password():
     return redirect(url_for("index"))
 
 
+@app.route("/password/remove", methods=["POST"])
+@login_required
+def password_remove():
+    ip = _ip()
+    if not has_password():
+        return redirect(url_for("index"))
+    if _locked(ip):
+        msg = "Demasiadas tentativas. Tenta daqui a 10 minutos."
+    elif not check_password(request.form.get("current", "")):
+        _fail(ip)
+        msg = "✖ Palavra-passe atual incorreta."
+    else:
+        remove_password()
+        session.clear()
+        msg = "✔ Palavra-passe removida. Atenção: o painel está aberto a quem tiver o link."
+    push_log(bot_state, msg)
+    return redirect(url_for("index"))
+
+
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("login") if has_password() else url_for("index"))
 
 
 @app.route("/health")
@@ -391,7 +470,7 @@ def mask(s):
 
 def snapshot(tab=""):
     s = bot_state
-    free = float(s["free"] or 0)
+    free = float((s["free_idle"] if s["active_position"] and s["free_idle"] else s["free"]) or 0)
     lev = int(s["leverage"])
     ratio = 1.0 / max(1, lev) + C.FEE_RESERVE_PCT / 100
     notional = max(0.0, min(float(s["margin_usdt"]) * lev, free * C.BALANCE_USE_PCT / 100 / ratio)) if free > 0 else 0.0
@@ -410,6 +489,9 @@ def snapshot(tab=""):
         "min_balance": round(C.MIN_NOTIONAL_FALLBACK * ratio / (C.BALANCE_USE_PCT / 100), 3),
         "equity": s["equity"],
         "avail": s["avail"],
+        "sl_pct": s["sl_pct"],
+        "tp_pct": s["tp_pct"],
+        "trail_pct": s["trail_pct"],
         "balance": s["balance"],
         "initial_balance": s["initial_balance"],
         "free": s["free"],
@@ -463,6 +545,10 @@ def index():
         running=s["running"],
         total_pairs=len(C.PAIRS),
         persistent=PERSISTENT,
+        has_pw=has_password(),
+        sl_pct=s["sl_pct"],
+        tp_pct=s["tp_pct"],
+        trail_pct=s["trail_pct"],
     )
 
 
@@ -493,6 +579,12 @@ def settings():
     except (TypeError, ValueError):
         pass
 
+    for field, lo, hi in (("sl_pct", 0.05, 5.0), ("tp_pct", 0.1, 20.0), ("trail_pct", 0.03, 5.0)):
+        try:
+            s[field] = min(hi, max(lo, float(str(f.get(field, s[field])).replace(",", "."))))
+        except (TypeError, ValueError):
+            pass
+
     saved = store_credentials()
     persist()
     msg = "Definições guardadas." if saved else "Definições guardadas só em memória (entra de novo no painel para as cifrar em disco)."
@@ -505,8 +597,10 @@ def settings():
     s["retry"] = True
 
     if f.get("action") == "test":
-        start_diag()
         msg += " A testar a ligação (resultado no Dashboard)..."
+        push_log(s, msg)
+        start_diag()
+        return redirect(url_for("index"))
     push_log(s, msg)
     return redirect(url_for("index"))
 
@@ -514,8 +608,9 @@ def settings():
 @app.route("/diag", methods=["POST"])
 @login_required
 def diag():
-    if start_diag():
-        push_log(bot_state, "A diagnosticar a ligação à Bybit...")
+    if not bot_state["diag_running"]:
+        push_log(bot_state, "A diagnosticar a ligação à Bybit...")      # antes de arrancar, para o resumo final não ser apagado
+        start_diag()
     return redirect(url_for("index"))
 
 
@@ -687,10 +782,11 @@ HTML_TEMPLATE = """
             setText('lev-title', 'ALAVANCAGEM CONFIGURADA: ' + d.leverage + 'x');
             setText('lev-info', 'Margem por operação: ' + money(d.margin_usdt, 2) + ' USDT (usa até ' + money(d.margin_eff, 4) + ' do saldo livre)');
             setText('lev-info2', 'Posição = margem × ' + d.leverage + 'x = ' + money(d.notional, 2) + ' USDT');
-            setText('free', 'Saldo livre: ' + money(d.free, 4) + ' USDT');
+            setText('free', 'Saldo livre: ' + money(d.free, 4) + ' USDT' + (d.active_position ? ' (parte está em margem na posição aberta)' : ''));
+            setText('rules', 'Regras: SL ' + d.sl_pct + '% | TP ' + d.tp_pct + '% | trava rígida a +' + d.trail_pct + '%');
             setText('equity', d.equity != null ? ('Património na Bybit: ' + money(d.equity, 2) + ' USD | disponível ' + money(d.avail, 2)) : '');
             var w = document.getElementById('size-warn');
-            if (d.conn === 'ligado' && d.notional < d.min_notional) {
+            if (d.conn === 'ligado' && !d.active_position && d.notional < d.min_notional) {
                 w.style.display = 'block';
                 w.innerText = 'Saldo baixo: a ordem mínima da Bybit é cerca de ' + money(d.min_notional, 0) + ' USDT. Com ' + d.leverage + 'x precisas de pelo menos ' + money(d.min_balance, 2) + ' USDT livres. Aumenta a alavancagem ou o saldo.';
             } else { w.style.display = 'none'; }
@@ -724,7 +820,7 @@ HTML_TEMPLATE = """
 
             var p = d.active_position, pb = document.getElementById('pos-box');
             if (p) {
-                pb.innerHTML = '<b>' + esc(p.side) + ' ' + esc(p.pair) + '</b>' + (p.trailing ? ' <span class="badge b-long">DINAMITE</span>' : '') +
+                pb.innerHTML = '<b>' + esc(p.side) + ' ' + esc(p.pair) + '</b>' + (p.trailing ? ' <span class="badge b-long">TRAVA</span>' : '') +
                     '<p class="sub">Entrada ' + esc(p.entry) + ' | Preço ' + esc(p.price) + '</p>' +
                     '<p class="' + clsn(p.pnl_pct) + '" style="font-size:16px;font-weight:800">' + sgn(p.pnl_pct, 3) + '%</p>' +
                     '<p class="sub">SL ' + esc(p.sl) + ' | TP ' + esc(p.tp) + '</p>';
@@ -799,14 +895,15 @@ HTML_TEMPLATE = """
             var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
             var pad = (mx - mn) * 0.08 || mx * 0.001;
             mn -= pad; mx += pad;
-            var L = 4, R = 74, T = 8, B = 8, pw = w - L - R, ph = h - T - B;
+            var L = 4, R = 74, T = 10, B = 10, pw = w - L - R, ph = h - T - B;
+            var labels = [];
             function X(k) { return L + pw * k / Math.max(1, pts.length - 1); }
             function Y(v) { return T + ph * (1 - (v - mn) / (mx - mn)); }
             function hline(v, color, label) {
                 ctx.strokeStyle = color; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
                 ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(L + pw, Y(v)); ctx.stroke();
-                ctx.setLineDash([]); ctx.fillStyle = color; ctx.font = '10px sans-serif'; ctx.textAlign = 'left';
-                ctx.fillText(label + ' ' + trim(v), L + pw + 4, Y(v) + 3);
+                ctx.setLineDash([]);
+                labels.push({ y: Y(v), t: label + ' ' + trim(v), c: color, b: false });
             }
             hline(ch.tp, '#22c55e', 'TP');
             hline(ch.entry, '#94a3b8', 'Ent');
@@ -818,8 +915,14 @@ HTML_TEMPLATE = """
             ctx.stroke();
             ctx.fillStyle = up ? '#4ade80' : '#f87171';
             ctx.beginPath(); ctx.arc(X(pts.length - 1), Y(last), 3.5, 0, 6.2832); ctx.fill();
-            ctx.textAlign = 'left'; ctx.font = 'bold 10px sans-serif';
-            ctx.fillText(trim(last), L + pw + 4, Y(last) - 4);
+            labels.push({ y: Y(last), t: trim(last), c: up ? '#4ade80' : '#f87171', b: true });
+            labels.sort(function (p, q) { return p.y - q.y; });                       // afasta etiquetas que se sobrepõem
+            for (i = 1; i < labels.length; i++) { if (labels[i].y - labels[i - 1].y < 13) { labels[i].y = labels[i - 1].y + 13; } }
+            for (i = labels.length - 2; i >= 0; i--) { if (labels[i + 1].y > h - 4) { labels[i + 1].y = h - 4; } if (labels[i + 1].y - labels[i].y < 13) { labels[i].y = labels[i + 1].y - 13; } }
+            labels.forEach(function (l) {
+                ctx.fillStyle = l.c; ctx.font = (l.b ? 'bold ' : '') + '10px sans-serif'; ctx.textAlign = 'left';
+                ctx.fillText(l.t, L + pw + 4, l.y + 3);
+            });
             var pc = d * (last - ch.entry) / ch.entry * 100;
             cap.innerText = ch.pair + ' ' + ch.side + (ch.closed ? ' (fechada)' : ' (ao vivo)') + ' | ' + sgn(pc, 3) + '% | ' + dur(Math.round(pts[pts.length - 1][0])) + (ch.closed ? ' | PnL ' + sgn(ch.pnl, 4) + ' USDT' : '');
         }
@@ -909,6 +1012,7 @@ HTML_TEMPLATE = """
                 <p class="sub" id="lev-info"></p>
                 <p class="sub" id="lev-info2"></p>
                 <p class="sub" id="free"></p>
+                <p class="sub" id="rules"></p>
                 <p class="sub" id="equity"></p>
                 <div class="warnbox" id="size-warn" style="display:none"></div>
             </div>
@@ -981,16 +1085,28 @@ HTML_TEMPLATE = """
                     <input type="number" name="margin_usdt" value="{{ margin }}" min="0.1" step="0.1" required>
                     <p class="hint">É a <b>margem</b>: o valor do teu saldo que entra em cada operação. A posição é multiplicada pela alavancagem (margem × alavancagem). Ex.: 5 USDT × 18x = 90 USDT. Se o saldo livre for menor, o robô usa no máximo 96% dele (o resto cobre as taxas).</p>
 
+                    <label>Stop loss inicial (%):</label>
+                    <input type="number" name="sl_pct" value="{{ sl_pct }}" min="0.05" max="5" step="0.05" required>
+                    <p class="hint">Distância entre a entrada e o stop loss. Mais largo aguenta mais oscilação do mercado, mas cada perda é maior.</p>
+
+                    <label>Take profit (%):</label>
+                    <input type="number" name="tp_pct" value="{{ tp_pct }}" min="0.1" max="20" step="0.05" required>
+
+                    <label>Trava rígida a favor (%):</label>
+                    <input type="number" name="trail_pct" value="{{ trail_pct }}" min="0.03" max="5" step="0.01" required>
+                    <p class="hint">Quando o lucro chega a este valor, o stop fixa-se no melhor preço e qualquer recuo fecha a operação na hora (o robô abre logo a seguinte). As taxas da Bybit custam cerca de 0,11% por operação (abrir e fechar): valores abaixo de ~0,20% rendem perto de zero depois das taxas.</p>
+
                     <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
                     <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação (resultado no Dashboard)</button>
                 </form>
                 <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta.
-                {% if persistent %}As chaves ficam guardadas no servidor, cifradas com a palavra-passe do painel.
-                {% else %}<span style="color:#f59e0b">Armazenamento temporário: se a Render reiniciar, a palavra-passe e as chaves perdem-se e tens de as inserir de novo. Para guardar de forma permanente, adiciona um Disk na Render com Mount Path /var/data.</span>{% endif %}</p>
+                {% if persistent %}As chaves ficam guardadas no servidor, cifradas{% if has_pw %} com a palavra-passe do painel{% endif %}.
+                {% else %}<span style="color:#f59e0b">Armazenamento temporário: se a Render reiniciar, as chaves perdem-se e tens de as inserir de novo. Para guardar de forma permanente, adiciona um Disk na Render com Mount Path /var/data.</span>{% endif %}</p>
             </div>
 
             <div class="card">
                 <h3 style="margin-bottom: 15px;">Segurança do painel</h3>
+                {% if has_pw %}
                 <form action="/password" method="POST" autocomplete="off">
                     <label>Palavra-passe atual:</label>
                     <input type="password" name="current" required>
@@ -1000,8 +1116,23 @@ HTML_TEMPLATE = """
                     <input type="password" name="new2" minlength="8" required>
                     <button type="submit" class="btn-save">Alterar palavra-passe do painel</button>
                 </form>
+                <form action="/password/remove" method="POST" autocomplete="off" style="margin-top:16px">
+                    <label>Para remover a palavra-passe, escreve a atual:</label>
+                    <input type="password" name="current" required>
+                    <button type="submit" class="btn-save btn-test">Remover palavra-passe (painel aberto)</button>
+                </form>
+                {% else %}
+                <div class="warnbox" style="margin-top:0;margin-bottom:12px">O painel está SEM palavra-passe: qualquer pessoa com o link pode ver e controlar o robô (iniciar, parar, alterar alavancagem e margem). Ativa uma quando quiseres.</div>
+                <form action="/setup" method="POST" autocomplete="off">
+                    <label>Nova palavra-passe (mínimo 8):</label>
+                    <input type="password" name="password" minlength="8" required>
+                    <label>Repetir palavra-passe:</label>
+                    <input type="password" name="password2" minlength="8" required>
+                    <button type="submit" class="btn-save">Ativar palavra-passe do painel</button>
+                </form>
+                {% endif %}
             </div>
-            <a class="logout" href="/logout">Sair do painel</a>
+            {% if has_pw %}<a class="logout" href="/logout">Sair do painel</a>{% endif %}
         </div>
 
         <div class="nav-bar">
