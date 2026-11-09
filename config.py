@@ -70,7 +70,8 @@ MAX_DAILY_LOSS_PCT = _env("MAX_DAILY_LOSS_PCT", 20.0)    # para as entradas ao p
 TZ_OFFSET_H = _env("TZ_OFFSET_H", 1)                     # fuso do painel (Angola = UTC+1)
 
 # ============================ SALDO PEQUENO ============================
-BALANCE_USE_PCT = _env("BALANCE_USE_PCT", 90.0)          # máx. % do saldo livre usada como margem (resto = taxas)
+BALANCE_USE_PCT = _env("BALANCE_USE_PCT", 96.0)          # máx. % do saldo livre usada (margem + taxas); o resto é folga
+FEE_RESERVE_PCT = _env("FEE_RESERVE_PCT", 0.12)          # % da posição reservada para as taxas de abrir e fechar
 MIN_NOTIONAL_FALLBACK = _env("MIN_NOTIONAL_FALLBACK", 5.0)  # ordem mínima da Bybit (USDT) se o contrato não indicar
 
 # ============================ PAINEL ============================
