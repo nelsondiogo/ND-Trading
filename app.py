@@ -47,6 +47,8 @@ bot_state = {
     "leverage": int(C.LEVERAGE_DEFAULT),
     "margin_usdt": float(C.MARGIN_DEFAULT_USDT),
     "retry": False,
+    "rigor": C.ENTRY_RIGOR,
+    "rigor_eff": C.ENTRY_RIGOR,
     "sl_pct": C.SL_PCT,
     "tp_pct": C.TP_PCT,
     "trail_pct": C.TRAIL_TRIGGER_PCT,
@@ -84,6 +86,7 @@ bot_state = {
 ITER = 200_000
 _lock = threading.RLock()
 _store = {}        # conteúdo de settings.json
+_rev = 0           # sobe a cada alteração: o navegador usa-o para atualizar a sua cópia de segurança
 _fernet = None     # chave de cifra: só existe em memória, depois de entrares com a palavra-passe
 
 
@@ -113,6 +116,8 @@ def _load():
 
 
 def _save():
+    global _rev
+    _rev += 1
     with _lock:
         try:
             tmp = SETTINGS_FILE + ".tmp"
@@ -168,7 +173,8 @@ def store_credentials():
 def persist():
     """Guarda em disco as preferências (ambiente, alavancagem, margem, SL/TP/trava) e as chaves cifradas."""
     _store.update(mode=bot_state["mode"], leverage=bot_state["leverage"], margin_usdt=bot_state["margin_usdt"],
-                  sl_pct=bot_state["sl_pct"], tp_pct=bot_state["tp_pct"], trail_pct=bot_state["trail_pct"])
+                  sl_pct=bot_state["sl_pct"], tp_pct=bot_state["tp_pct"], trail_pct=bot_state["trail_pct"],
+                  rigor=bot_state["rigor"])
     return _save()
 
 
@@ -239,6 +245,7 @@ def _apply_prefs():
         bot_state["sl_pct"] = min(5.0, max(0.05, float(_store.get("sl_pct", bot_state["sl_pct"]))))
         bot_state["tp_pct"] = min(20.0, max(0.1, float(_store.get("tp_pct", bot_state["tp_pct"]))))
         bot_state["trail_pct"] = min(5.0, max(0.03, float(_store.get("trail_pct", bot_state["trail_pct"]))))
+        bot_state["rigor"] = min(5, max(1, int(_store.get("rigor", bot_state["rigor"]))))
     except (TypeError, ValueError):
         pass
 
@@ -415,6 +422,69 @@ def logout():
     return redirect(url_for("login") if has_password() else url_for("index"))
 
 
+_BACKUP_NUM = ("leverage", "margin_usdt", "sl_pct", "tp_pct", "trail_pct", "rigor")
+
+
+def _is_fresh():
+    """Servidor acabado de arrancar, sem palavra-passe, sem chaves e sem nada guardado (ex.: depois de um reinício)."""
+    return not has_password() and not _store.get("creds") and not bot_state["api_key"]
+
+
+def _clean_blob(data):
+    """Valida a cópia de segurança vinda do navegador; devolve só os campos permitidos ou None."""
+    if not isinstance(data, dict):
+        return None
+    out = {}
+    for k in ("pw_salt", "pw_hash", "enc_salt", "local_key", "creds"):
+        v = data.get(k)
+        if isinstance(v, str) and 0 < len(v) < 4096:
+            out[k] = v
+    if data.get("mode") in MODES:
+        out["mode"] = data["mode"]
+    for k in _BACKUP_NUM:
+        try:
+            out[k] = int(data[k]) if k in ("leverage", "rigor") else float(data[k])
+        except (KeyError, TypeError, ValueError):
+            pass
+    if not (out.get("creds") or out.get("pw_hash")):
+        return None
+    if out.get("pw_hash"):
+        try:
+            for k in ("pw_salt", "enc_salt", "pw_hash"):
+                bytes.fromhex(out.get(k, ""))
+        except ValueError:
+            return None
+        if not (out.get("pw_salt") and out.get("enc_salt")):
+            return None
+        out.pop("local_key", None)
+    return out
+
+
+@app.route("/api/backup")
+@login_required
+def api_backup():
+    keys = ("pw_salt", "pw_hash", "enc_salt", "local_key", "creds", "mode") + _BACKUP_NUM
+    return app.response_class(json.dumps({k: _store[k] for k in keys if k in _store}), mimetype="application/json")
+
+
+@app.route("/api/restore", methods=["POST"])
+def api_restore():
+    """Depois de um reinício da Render, o navegador devolve a cópia (cifrada) das definições, da palavra-passe e das chaves."""
+    new = _clean_blob(request.get_json(silent=True))
+    if new is None:
+        return jsonify({"ok": False, "error": "cópia inválida"}), 400
+    with _lock:
+        if not _is_fresh():
+            return jsonify({"ok": False, "error": "já configurado"}), 409
+        _store.clear()
+        _store.update(new)
+        _save()
+    _apply_prefs()
+    _init_open_mode()                                  # sem palavra-passe: decifra e liga logo; com palavra-passe: espera o login
+    push_log(bot_state, "Definições restauradas a partir do navegador." + (" Entra com a tua palavra-passe." if has_password() else ""))
+    return jsonify({"ok": True, "password": has_password()})
+
+
 @app.route("/health")
 def health():
     ensure_bot()
@@ -492,6 +562,10 @@ def snapshot(tab=""):
         "sl_pct": s["sl_pct"],
         "tp_pct": s["tp_pct"],
         "trail_pct": s["trail_pct"],
+        "rigor": s["rigor"],
+        "rigor_eff": s["rigor_eff"],
+        "fresh": _is_fresh(),
+        "backup_rev": _rev,
         "balance": s["balance"],
         "initial_balance": s["initial_balance"],
         "free": s["free"],
@@ -549,6 +623,7 @@ def index():
         sl_pct=s["sl_pct"],
         tp_pct=s["tp_pct"],
         trail_pct=s["trail_pct"],
+        rigor=s["rigor"],
     )
 
 
@@ -584,6 +659,11 @@ def settings():
             s[field] = min(hi, max(lo, float(str(f.get(field, s[field])).replace(",", "."))))
         except (TypeError, ValueError):
             pass
+
+    try:
+        s["rigor"] = min(5, max(1, int(float(f.get("rigor", s["rigor"])))))
+    except (TypeError, ValueError):
+        pass
 
     saved = store_credentials()
     persist()
@@ -749,6 +829,29 @@ HTML_TEMPLATE = """
     </style>
     <script>
         var currentTab = 'dashboard';
+        var lastRev = -1, restoring = false, restoreTries = 0;
+
+        // Cópia de segurança no navegador: depois de um reinício da Render o servidor volta vazio e recebe-a de volta.
+        function syncBackup(d) {
+            try {
+                if (d.fresh) {
+                    var saved = localStorage.getItem('nd_backup');
+                    if (saved && !restoring && restoreTries < 3) {
+                        restoring = true; restoreTries++;
+                        fetch('/api/restore', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: saved })
+                            .then(function (r) { return r.json(); })
+                            .then(function (j) { if (j.ok) { location.reload(); } else { restoring = false; } })
+                            .catch(function () { restoring = false; });
+                    }
+                } else if (d.backup_rev !== lastRev) {
+                    lastRev = d.backup_rev;
+                    fetch('/api/backup', { credentials: 'same-origin' }).then(function (r) { return r.text(); }).then(function (t) {
+                        var o = JSON.parse(t);
+                        if (o.creds || o.pw_hash || !localStorage.getItem('nd_backup')) { localStorage.setItem('nd_backup', t); }
+                    }).catch(function () {});
+                }
+            } catch (e) {}
+        }
         var rows = {};
 
         function showTab(tabId) {
@@ -783,7 +886,7 @@ HTML_TEMPLATE = """
             setText('lev-info', 'Margem por operação: ' + money(d.margin_usdt, 2) + ' USDT (usa até ' + money(d.margin_eff, 4) + ' do saldo livre)');
             setText('lev-info2', 'Posição = margem × ' + d.leverage + 'x = ' + money(d.notional, 2) + ' USDT');
             setText('free', 'Saldo livre: ' + money(d.free, 4) + ' USDT' + (d.active_position ? ' (parte está em margem na posição aberta)' : ''));
-            setText('rules', 'Regras: SL ' + d.sl_pct + '% | TP ' + d.tp_pct + '% | trava rígida a +' + d.trail_pct + '%');
+            setText('rules', 'Regras: SL ' + d.sl_pct + '% | TP ' + d.tp_pct + '% | trava rígida a +' + d.trail_pct + '% | rigor ' + d.rigor + (d.rigor_eff > d.rigor ? ' (+1 auto)' : ''));
             setText('equity', d.equity != null ? ('Património na Bybit: ' + money(d.equity, 2) + ' USD | disponível ' + money(d.avail, 2)) : '');
             var w = document.getElementById('size-warn');
             if (d.conn === 'ligado' && !d.active_position && d.notional < d.min_notional) {
@@ -968,6 +1071,7 @@ HTML_TEMPLATE = """
                 busy = false;
                 if (!ds) { return; }
                 renderCommon(ds[0]);
+                syncBackup(ds[0]);
                 if (tab === 'mercado') { renderMarket(ds[0]); }
                 if (tab === 'dashboard') { drawChart(ds[0].chart); }
                 if (tab === 'historico' && ds[1]) { renderHistory(ds[1]); }
@@ -1092,14 +1196,18 @@ HTML_TEMPLATE = """
                     <label>Take profit (%):</label>
                     <input type="number" name="tp_pct" value="{{ tp_pct }}" min="0.1" max="20" step="0.05" required>
 
+                    <label>Rigor das entradas (1 a 5):</label>
+                    <input type="number" name="rigor" value="{{ rigor }}" min="1" max="5" step="1" required>
+                    <p class="hint">O robô só entra com tendência clara (EMA 9 &gt; 21 &gt; 50), volatilidade que pague as taxas e preço não esticado. 1 = só tendência; 3 = equilibrado (recomendado); 5 = exige todas as confirmações (poucas entradas, mais seguras). Se as últimas operações somarem perda, o rigor sobe +1 sozinho. Nenhuma entrada garante lucro.</p>
+
                     <label>Trava rígida a favor (%):</label>
                     <input type="number" name="trail_pct" value="{{ trail_pct }}" min="0.03" max="5" step="0.01" required>
-                    <p class="hint">Quando o lucro chega a este valor, o stop fixa-se no melhor preço e qualquer recuo fecha a operação na hora (o robô abre logo a seguinte). As taxas da Bybit custam cerca de 0,11% por operação (abrir e fechar): valores abaixo de ~0,20% rendem perto de zero depois das taxas.</p>
+                    <p class="hint">Assim que a operação fica positiva, o stop sobe com o lucro e nunca desce (a perda possível encolhe). Quando o lucro chega a este valor, o stop fixa-se no melhor preço e qualquer recuo fecha a operação na hora (o robô abre logo a seguinte). As taxas da Bybit custam cerca de 0,11% por operação (abrir e fechar): valores abaixo de ~0,20% rendem perto de zero depois das taxas.</p>
 
                     <button type="submit" name="action" value="save" class="btn-save">Guardar Definições</button>
                     <button type="submit" name="action" value="test" class="btn-save btn-test">Guardar e testar ligação (resultado no Dashboard)</button>
                 </form>
-                <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta.
+                <p class="hint" style="margin-top:10px">O secret nunca é mostrado de volta. As definições, a palavra-passe e as chaves ficam também guardadas (cifradas) neste navegador e restauram-se sozinhas depois de um reinício da Render.
                 {% if persistent %}As chaves ficam guardadas no servidor, cifradas{% if has_pw %} com a palavra-passe do painel{% endif %}.
                 {% else %}<span style="color:#f59e0b">Armazenamento temporário: se a Render reiniciar, as chaves perdem-se e tens de as inserir de novo. Para guardar de forma permanente, adiciona um Disk na Render com Mount Path /var/data.</span>{% endif %}</p>
             </div>
