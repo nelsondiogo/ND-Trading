@@ -39,36 +39,120 @@ def push_log(state, msg):
     del ev[60:]
 
 
-def analyze(c):
-    """Analisa velas de 1 min [ts, o, h, l, c, v] (a última está em formação).
-    Devolve dict: trend (LONG|SHORT|NEUTRO), side (sinal pronto ou None), score, move, vr, chg1m, status."""
-    res = {"side": None, "trend": "—", "score": 0.0, "move": 0.0, "vr": 0.0, "chg1m": 0.0, "status": "SEM DADOS"}
-    if not c or len(c) < 24:
+def ema_series(vals, n):
+    k = 2.0 / (n + 1)
+    out, e = [], vals[0]
+    for v in vals:
+        e = v * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
+def rsi(closes, n=14):
+    if len(closes) < n + 1:
+        return 50.0
+    gains = losses = 0.0
+    for i in range(-n, 0):
+        ch = closes[i] - closes[i - 1]
+        if ch >= 0:
+            gains += ch
+        else:
+            losses -= ch
+    if losses == 0:
+        return 100.0 if gains > 0 else 50.0
+    return 100.0 - 100.0 / (1.0 + gains / losses)
+
+
+def atr_pct(cl, n=14):
+    """Volatilidade média (ATR) das últimas n velas fechadas, em % do preço."""
+    trs = []
+    for i in range(-n, 0):
+        h, l, pc = cl[i][2], cl[i][3], cl[i - 1][4]
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    return sum(trs) / len(trs) / cl[-1][4] * 100 if cl[-1][4] else 0.0
+
+
+NEED_CONF = {1: 0, 2: 0, 3: 3, 4: 4, 5: 6}      # confirmações exigidas por nível de rigor
+
+
+def analyze(c, rigor=None, btc5=None, spread_pct=0.0):
+    """Analisa velas de 1 min [ts, o, h, l, c, v] (a última está em formação) e decide se há entrada.
+
+    Tendência: EMA 9 > 21 > 50 (long) ou 9 < 21 < 50 (short), com o preço do lado certo da EMA21.
+    Portas (rigor >= 2): ATR suficiente para pagar as taxas, preço não esticado (RSI e distância à EMA21),
+    spread pequeno face à volatilidade.
+    Confirmações (6): inclinação da EMA21, vela forte a favor, rompimento das 2 últimas máximas/mínimas,
+    volume, tendência de 5 min no mesmo sentido, BTC não contra.
+    Devolve dict: trend, side (None se não houver entrada), score, conf/need, atr, vr, move, chg1m, status."""
+    rigor = max(1, min(5, int(C.ENTRY_RIGOR if rigor is None else rigor)))
+    res = {"side": None, "trend": "—", "score": 0.0, "move": 0.0, "vr": 0.0, "chg1m": 0.0,
+           "atr": 0.0, "conf": 0, "need": 0, "status": "SEM DADOS"}
+    if not c or len(c) < 56:
         return res
     c = sorted(c, key=lambda k: k[0])                      # garante a ordem cronológica
-    cur, prev = c[-1], c[-2]
-    hist = c[-22:-2]
+    cl, cur = c[:-1], c[-1]
+    prev = cl[-1]
+    p = cur[4]
+    closes = [k[4] for k in cl]
+    e9s, e21s, e50s = ema_series(closes, 9), ema_series(closes, 21), ema_series(closes, 50)
+    e9, e21, e50 = e9s[-1], e21s[-1], e50s[-1]
+
     res["move"] = max((k[2] - k[3]) / k[3] * 100 for k in (cur, prev))
-    vols = sorted(k[5] for k in hist)
+    vols = sorted(k[5] for k in cl[-21:-1])
     ref = vols[len(vols) // 2] or (sum(vols) / len(vols))   # mediana (um pico antigo não distorce)
     res["vr"] = prev[5] / ref if ref > 0 else 0.0
     res["chg1m"] = (cur[4] - cur[1]) / cur[1] * 100 if cur[1] else 0.0
+    atr = res["atr"] = atr_pct(cl)
 
-    c3, c2, c1 = c[-3][4], prev[4], cur[4]                 # três fechos seguidos
-    trend = "LONG" if c1 > c2 > c3 else ("SHORT" if c1 < c2 < c3 else "NEUTRO")
+    if e9 > e21 > e50 and p > e21:
+        trend = "LONG"
+    elif e9 < e21 < e50 and p < e21:
+        trend = "SHORT"
+    else:
+        trend = "NEUTRO"
     res["trend"] = res["status"] = trend
     if trend == "NEUTRO":
         return res
+    d = 1 if trend == "LONG" else -1
+
     if res["move"] > C.MAX_1M_MOVE_PCT:                    # anti-saturação (exaustão/topo)
         res["status"] = "SATURADO"
         return res
-    if (trend == "LONG" and not C.ALLOW_LONG) or (trend == "SHORT" and not C.ALLOW_SHORT):
+    if (d > 0 and not C.ALLOW_LONG) or (d < 0 and not C.ALLOW_SHORT):
         res["status"] = "DESATIVADO"
         return res
-    if C.MIN_VOL_RATIO > 0 and res["vr"] < C.MIN_VOL_RATIO:
-        res["status"] = "VOL BAIXO"
+
+    if rigor >= 2:
+        if atr < C.MIN_ATR_PCT:                            # não há movimento para pagar as taxas
+            res["status"] = "ATR BAIXO"
+            return res
+        if atr > C.MAX_ATR_PCT:
+            res["status"] = "ATR ALTO"
+            return res
+        dist = d * (p - e21) / e21 * 100                   # não persegue movimentos já esticados
+        r = rsi(closes)
+        if dist > C.EXTENDED_ATR_MULT * atr or (d > 0 and r > 75) or (d < 0 and r < 25):
+            res["status"] = "ESTICADO"
+            return res
+        if spread_pct > 0.25 * atr:
+            res["status"] = "SPREAD ALTO"
+            return res
+
+    rng = prev[2] - prev[3]
+    candle = d * (prev[4] - prev[1]) > 0 and rng > 0 and abs(prev[4] - prev[1]) / rng >= C.MIN_BODY_RATIO
+    last2 = cl[-2:]
+    brk = p > max(k[2] for k in last2) if d > 0 else p < min(k[3] for k in last2)
+    slope = d * (e21s[-1] - e21s[-6]) > 0
+    volc = res["vr"] >= C.MIN_VOL_RATIO
+    htf = d * (closes[-1] - closes[-6]) > 0 and d * (closes[-6] - closes[-11]) > 0     # tendência de 5 min
+    btc = btc5 is None or d * btc5 > -C.BTC_BLOCK_PCT
+    conf = sum(1 for x in (slope, candle, brk, volc, htf, btc) if x)
+    need = NEED_CONF[rigor]
+    res["conf"], res["need"] = conf, need
+    if conf < need:
+        res["status"] = f"CONFIRMAÇÃO {conf}/{need}"
         return res
-    res.update(side=trend.lower(), status="SINAL", score=(0.5 + res["vr"]) * abs(c1 - c3) / c3 * 100)
+    res.update(side=trend.lower(), status="SINAL", score=conf * 10 + min(atr, 0.6) * 10 + min(res["vr"], 3.0) * 2)
     return res
 
 
@@ -95,6 +179,8 @@ class Engine:
         self.lev_ok = set()
         self.loss_streak = 0
         self.pause_until = 0.0
+        self.btc5 = None
+        self.pair_losses = {}
         self.pnl_day = 0.0
         self.day = datetime.now(timezone.utc).date()
         self.day_balance = 0.0
@@ -121,6 +207,16 @@ class Engine:
     def trading(self):
         """O robô pode operar (botão INICIAR ativo)."""
         return self.online() and self.st["running"]
+
+    def rigor_eff(self):
+        """Rigor das entradas: o definido em Ajustes, +1 se as últimas operações somam perda."""
+        r = int(self.st.get("rigor", C.ENTRY_RIGOR))
+        h = self.st["history"][:8]
+        if len(h) >= 5 and sum(x.get("pnl", 0) for x in h) < 0:
+            r += 1
+        r = max(1, min(5, r))
+        self.st["rigor_eff"] = r
+        return r
 
     # parâmetros de risco: vêm do painel (Ajustes) e valem para a próxima operação
     def p_sl(self):
@@ -313,12 +409,12 @@ class Engine:
             a = self.ana.get(s, {})
             ok, why = self.tradable(s, t)
             st_ = a.get("status", "")
-            if st_ in ("SATURADO", "VOL BAIXO", "DESATIVADO"):
-                note = st_
-            elif st_ == "SINAL":
-                note = "SINAL ✓" if ok else why
-            else:
+            if st_ == "SINAL":
+                note = f"SINAL ✓ {a.get('conf', 0)}/6" if ok else why
+            elif st_ in ("NEUTRO", "SEM DADOS", "LONG", "SHORT", ""):
                 note = "" if ok else why
+            else:
+                note = st_
             bid, ask = t.get("bid"), t.get("ask")
             spread = (ask - bid) / ask * 100 if bid and ask else 0.0
             trend = a.get("trend", "—")
@@ -334,19 +430,35 @@ class Engine:
         self.st["market_data"] = rows
         self.st["market_counts"] = counts
 
+    def spread_pct(self, sym):
+        t = self.tick.get(sym) or {}
+        bid, ask = t.get("bid"), t.get("ask")
+        return (ask - bid) / ask * 100 if bid and ask else 0.0
+
+    async def update_btc(self):
+        """Direção do BTC nos últimos 5 min: não entra contra um movimento forte do mercado."""
+        try:
+            bc = sorted(await self.ex.fetch_ohlcv("BTC/USDT:USDT", "1m", limit=12), key=lambda k: k[0])[:-1]
+            self.btc5 = (bc[-1][4] - bc[-6][4]) / bc[-6][4] * 100 if len(bc) >= 6 and bc[-6][4] else None
+        except Exception:
+            self.btc5 = None
+
     async def scan_once(self):
         uni = [(self.tick[s]["qv"], s) for s in self.pairs
                if s in self.tick and 0 < self.tick[s]["last"] < C.MAX_PRICE_USDT]   # só moedas < 1 USDT
         uni.sort(reverse=True)
         syms = [s for _, s in uni[:C.TOP_N]]
-        res = await asyncio.gather(*(self.ex.fetch_ohlcv(s, "1m", limit=25) for s in syms), return_exceptions=True)
+        res = await asyncio.gather(*(self.ex.fetch_ohlcv(s, "1m", limit=C.CANDLES_LIMIT) for s in syms),
+                                   return_exceptions=True)
         if syms and all(isinstance(r, Exception) for r in res):
             raise res[0]
+        await self.update_btc()
+        rig = self.rigor_eff()
         cands = []
         for s, c in zip(syms, res):
             if isinstance(c, Exception):
                 continue
-            a = analyze(c)
+            a = analyze(c, rig, self.btc5, self.spread_pct(s))
             self.ana[s] = a
             if a["side"] and self.tradable(s, self.tick[s])[0]:
                 cands.append((a["score"], s, a["side"]))
@@ -437,8 +549,8 @@ class Engine:
         d = 1 if side == "long" else -1
         coin = symbol.split("/")[0]
 
-        c = await ex.fetch_ohlcv(symbol, "1m", limit=25)   # revalida o sinal mesmo antes de entrar
-        if analyze(c)["side"] != side:
+        c = await ex.fetch_ohlcv(symbol, "1m", limit=C.CANDLES_LIMIT)   # revalida o sinal mesmo antes de entrar
+        if analyze(c, self.rigor_eff(), self.btc5, self.spread_pct(symbol))["side"] != side:
             return
 
         lev = self.lev_for(symbol)                         # respeita o máximo do contrato
@@ -518,7 +630,7 @@ class Engine:
         t0 = opened_ts or time.time()
         trailing = False
         reason = "SL/TP na Bybit"
-        p, window, last_check, fails = best, deque(), 0.0, 0
+        p, window, last_check, fails, ramp_t = best, deque(), 0.0, 0, 0.0
         chart = {"pair": coin, "side": side_txt, "entry": entry, "sl": last_sl, "tp": tp,
                  "points": [], "closed": False, "trailing": False}
         pts = chart["points"]
@@ -566,10 +678,13 @@ class Engine:
                 "sl": fmt(last_sl), "tp": fmt(tp), "trailing": trailing,
             }
 
-            # TRAVA RÍGIDA: ao atingir o lucro definido, o stop fixa-se no cume do melhor preço e não aceita recuo
-            if not trailing and d * (best - entry) / entry * 100 >= self.p_trail():
+            # STOP ESCALONADO + TRAVA RÍGIDA. Assim que a operação fica positiva, o stop sobe com o lucro (nunca desce);
+            # ao atingir o lucro definido fixa-se no cume do melhor preço e não aceita nenhum recuo.
+            lock = self.p_trail()
+            peak_pct = d * (best - entry) / entry * 100
+            if not trailing and peak_pct >= lock:
                 trailing = True
-                self.log(f"TRAVA ativada em {coin} a +{self.p_trail():g}%: stop rígido no cume {fmt(best)}")
+                self.log(f"TRAVA ativada em {coin} a +{lock:g}%: stop rígido no cume {fmt(best)}")
             if trailing:
                 level = best * (1 - d * C.TRAIL_DISTANCE_PCT / 100)    # 0% = exatamente o cume
                 if d * (p - level) < 0:                                # qualquer tick contra => fecha já
@@ -587,7 +702,23 @@ class Engine:
                         await self.close(symbol, reason)
                         break
             else:
-                # Antes da trava: proteção contra choque brusco dentro da janela
+                if peak_pct > 0 and lock > 0:
+                    give = self.p_sl() * (1 - peak_pct / lock)         # folga que resta: SL no início, 0 na trava
+                    ramp_sl = entry * (1 + d * (peak_pct - give) / 100)
+                    eff = ramp_sl if d * (ramp_sl - last_sl) > 0 else last_sl
+                    if d * (p - eff) <= 0:                             # o preço devolveu o lucro até ao stop
+                        reason = "Stop escalonado (recuo com lucro)"
+                        await self.close(symbol, reason)
+                        break
+                    if (eff is ramp_sl and d * (ramp_sl - last_sl) > max(tick * 0.5, entry * 0.00005)
+                            and time.time() - ramp_t >= 0.25):
+                        ramp_t = time.time()
+                        try:
+                            await self.set_stop(symbol, stopLoss=ramp_sl)
+                            last_sl = ramp_sl
+                        except Exception as e:
+                            self.log(f"Stop escalonado não aplicado ({str(e)[:40]})")
+                # choque brusco contra a posição dentro da janela (antes da trava)
                 ref = max(x for _, x in window) if d > 0 else min(x for _, x in window)
                 if d * (ref - p) / ref * 100 >= C.REVERSAL_DROP_PCT:
                     reason = "Inversão brusca"
@@ -624,7 +755,12 @@ class Engine:
                 pass
         self.log(f"FIM {side_txt} {coin} | {reason} | PnL {pnl:+.4f} USDT")
 
-        self.cooldown[symbol] = time.time() + (C.COOLDOWN_LOSS_S if pnl < 0 else C.COOLDOWN_S)
+        n = self.pair_losses.get(symbol, 0) + 1 if pnl < 0 else 0
+        self.pair_losses[symbol] = n
+        pause = C.PAIR_LOSS_PAUSE_S if n >= 2 else (C.COOLDOWN_LOSS_S if pnl < 0 else C.COOLDOWN_S)
+        self.cooldown[symbol] = time.time() + pause
+        if n >= 2:
+            self.log(f"{coin}: 2 perdas seguidas neste par, pausa de {pause // 60} min")
         if pnl < 0:
             self.loss_streak += 1
             if self.loss_streak >= C.MAX_CONSEC_LOSSES:
