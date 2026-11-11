@@ -43,7 +43,7 @@ ALLOW_SHORT = _env("ALLOW_SHORT", 1) == 1
 
 # ============================ FILTRO PRÉ-ENTRADA ============================
 MAX_1M_MOVE_PCT = _env("MAX_1M_MOVE_PCT", 1.5)           # rejeita amplitude > 1,5% numa vela de 1 min
-MIN_VOL_RATIO = _env("MIN_VOL_RATIO", 0.0)               # volume da vela vs mediana das 20 anteriores (0 = desligado)
+MIN_VOL_RATIO = _env("MIN_VOL_RATIO", 0.7)               # confirmação: volume da vela vs mediana das 20 anteriores
 MIN_QUOTE_VOLUME_24H = _env("MIN_VOL", 10000000.0)       # volume 24h mínimo (USDT); ignorado na testnet
 MAX_SPREAD_PCT = _env("MAX_SPREAD_PCT", 0.08)            # spread bid/ask máximo; ignorado na testnet
 MAX_TICK_PCT = _env("MAX_TICK_PCT", 0.10)                # tick do preço, em % do preço
@@ -77,3 +77,15 @@ MIN_NOTIONAL_FALLBACK = _env("MIN_NOTIONAL_FALLBACK", 5.0)  # ordem mínima da B
 # ============================ PAINEL ============================
 CHART_POINTS = _env("CHART_POINTS", 600)                 # pontos do gráfico da ordem aberta (0,5 s cada)
 HISTORY_MAX = _env("HISTORY_MAX", 500)                   # operações guardadas no histórico
+
+# ============================ QUALIDADE DAS ENTRADAS ============================
+# O robô só entra com tendência clara (EMA 9 > 21 > 50 no mesmo sentido), volatilidade suficiente para pagar as
+# taxas, preço não esticado e um número mínimo de confirmações (rigor 1 a 5; editável em Ajustes).
+ENTRY_RIGOR = _env("ENTRY_RIGOR", 3)                     # 1 = só tendência | 3 = equilibrado | 5 = todas as confirmações
+CANDLES_LIMIT = _env("CANDLES_LIMIT", 70)                # velas de 1 min analisadas por par (cerca de 1 hora)
+MIN_ATR_PCT = _env("MIN_ATR_PCT", 0.15)                  # volatilidade mínima (ATR de 1 min, em %) para pagar as taxas
+MAX_ATR_PCT = _env("MAX_ATR_PCT", 1.2)                   # acima disto o mercado está desordenado demais
+EXTENDED_ATR_MULT = _env("EXTENDED_ATR_MULT", 2.5)       # não persegue: distância à EMA21 máxima = 2,5 x ATR
+MIN_BODY_RATIO = _env("MIN_BODY_RATIO", 0.35)            # corpo mínimo da última vela, em % da sua amplitude
+BTC_BLOCK_PCT = _env("BTC_BLOCK_PCT", 0.15)              # não entra contra um movimento do BTC maior que isto (5 min)
+PAIR_LOSS_PAUSE_S = _env("PAIR_LOSS_PAUSE_S", 1800)      # pausa no par após 2 perdas seguidas nele
